@@ -1,0 +1,24 @@
+# Android build output
+/android/**/build/
+/android/.gradle/
+/android/.kotlin/
+/android/.idea/
+/android/local.properties
+
+# OBS plugin build output
+obs-plugin/build_*/
+/obs-plugin/.deps/
+/obs-plugin/release/
+
+# packaged artefacts
+/release/
+*.apk
+*.aab
+
+# machine-local agent settings
+/.claude/settings.local.json
+
+# release signing (never commit)
+/keystore.properties
+*.jks
+*.keystore

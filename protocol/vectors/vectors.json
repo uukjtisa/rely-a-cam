@@ -1,0 +1,204 @@
+{
+ "_about": "Golden cases both halves must pass: android/core/protocol (JUnit) and obs-plugin/tests (CTest). Change PROTOCOL.md, both sides and this file in one commit.",
+ "frames": [
+  {
+   "name": "ping",
+   "type": 6,
+   "payload_hex": "0000000000000001",
+   "hex": "06000000080000000000000001"
+  },
+  {
+   "name": "bye (empty)",
+   "type": 8,
+   "payload_hex": "",
+   "hex": "0800000000"
+  },
+  {
+   "name": "hello",
+   "type": 1,
+   "payload_text": "{\"v\":1,\"k\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"device\":\"d1\",\"name\":\"nova 10\",\"app\":\"0.1.0\"}",
+   "hex": "01000000517b2276223a312c226b223a2241414141414141414141414141414141414141414141222c22646576696365223a226431222c226e616d65223a226e6f7661203130222c22617070223a22302e312e30227d"
+  },
+  {
+   "name": "video key frame",
+   "type": 17,
+   "media": {
+    "pts": 1000000,
+    "flags": 1,
+    "data_hex": "0000000165888400"
+   },
+   "hex": "110000001100000000000f4240010000000165888400"
+  },
+  {
+   "name": "video config",
+   "type": 17,
+   "media": {
+    "pts": 0,
+    "flags": 2,
+    "data_hex": "0000000167640028ac0000000168ee3cb0"
+   },
+   "hex": "110000001a0000000000000000020000000167640028ac0000000168ee3cb0"
+  }
+ ],
+ "pairing": [
+  {
+   "uri": "relyacam://pair?v=1&h=192.168.1.5,10.0.0.2&p=41127&k=AAAAAAAAAAAAAAAAAAAAAA&id=pc1&n=My%20PC",
+   "hosts": [
+    "192.168.1.5",
+    "10.0.0.2"
+   ],
+   "port": 41127,
+   "secret": "AAAAAAAAAAAAAAAAAAAAAA",
+   "id": "pc1",
+   "name": "My PC"
+  },
+  {
+   "uri": "relyacam://pair?v=1&h=127.0.0.1&p=50000&k=Zm9vYmFyYmF6cXV4cXV1eA&id=x&n=Desk%20%26%20Co",
+   "hosts": [
+    "127.0.0.1"
+   ],
+   "port": 50000,
+   "secret": "Zm9vYmFyYmF6cXV4cXV1eA",
+   "id": "x",
+   "name": "Desk & Co"
+  },
+  {
+   "uri": "https://example.com/not-ours",
+   "invalid": true
+  },
+  {
+   "uri": "relyacam://pair?v=1&h=10.0.0.2&p=41127&k=short",
+   "invalid": true
+  }
+ ],
+ "presets": [
+  {
+   "name": "nova 10 logical back",
+   "min": 0.65,
+   "max": 10,
+   "lenses": [
+    0.65,
+    1
+   ],
+   "expect": [
+    0.65,
+    1,
+    2
+   ]
+  },
+  {
+   "name": "wide, main, 3x tele",
+   "min": 0.6,
+   "max": 10,
+   "lenses": [
+    0.6,
+    1,
+    3
+   ],
+   "expect": [
+    0.6,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "single lens 1-4",
+   "min": 1,
+   "max": 4,
+   "lenses": [
+    1
+   ],
+   "expect": [
+    1,
+    2
+   ]
+  },
+  {
+   "name": "cannot zoom",
+   "min": 1,
+   "max": 1,
+   "lenses": [
+    1
+   ],
+   "expect": []
+  },
+  {
+   "name": "lens within 20% of 2x",
+   "min": 1,
+   "max": 8,
+   "lenses": [
+    1,
+    2.2
+   ],
+   "expect": [
+    1,
+    2.2
+   ]
+  },
+  {
+   "name": "lens outside range dropped",
+   "min": 1,
+   "max": 1.8,
+   "lenses": [
+    0.5,
+    1,
+    3
+   ],
+   "expect": [
+    1
+   ]
+  }
+ ],
+ "defaultMode": [
+  {
+   "modes": [
+    "1280x720@30",
+    "1920x1080@30",
+    "3840x2160@30"
+   ],
+   "expect": "1920x1080@30"
+  },
+  {
+   "modes": [
+    "1280x720@30",
+    "1920x1080@60",
+    "3840x2160@30"
+   ],
+   "expect": "1280x720@30"
+  },
+  {
+   "modes": [
+    "1280x720@30",
+    "1280x720@60"
+   ],
+   "expect": "1280x720@30"
+  },
+  {
+   "modes": [
+    "3840x2160@30"
+   ],
+   "expect": "3840x2160@30"
+  }
+ ],
+ "codes": [
+  {
+   "raw": "ABC-DEF",
+   "ok": true,
+   "normal": "ABCDEF"
+  },
+  {
+   "raw": "abc def",
+   "ok": true,
+   "normal": "ABCDEF"
+  },
+  {
+   "raw": "AB0-123",
+   "ok": false
+  },
+  {
+   "raw": "ABCDE",
+   "ok": false
+  }
+ ]
+}

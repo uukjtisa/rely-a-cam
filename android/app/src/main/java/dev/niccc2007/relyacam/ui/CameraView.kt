@@ -2,6 +2,9 @@ package dev.niccc2007.relyacam.ui
 
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
+import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
 import android.view.TextureView
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -10,6 +13,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.niccc2007.relyacam.Engine
 import dev.niccc2007.relyacam.UiState
@@ -41,6 +46,25 @@ fun CameraView(s: UiState, applyMirror: Boolean, modifier: Modifier = Modifier) 
     val latest = remember { arrayOfNulls<Any>(2) }
     latest[0] = s
     latest[1] = applyMirror
+
+    // A straight 180-degree turn (one landscape side to the other) doesn't resize the view, so no
+    // layout pass fires; the display's own rotation change is the only signal.
+    val ctx = LocalContext.current
+    DisposableEffect(Unit) {
+        val dm = ctx.getSystemService(DisplayManager::class.java)
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(id: Int) {}
+            override fun onDisplayRemoved(id: Int) {}
+            override fun onDisplayChanged(id: Int) {
+                val tv = view ?: return
+                val st = latest[0] as UiState
+                val cam = st.cam ?: return
+                tv.post { if (tv.width > 0) tv.setTransform(matrix(tv, st, cam, latest[1] as Boolean)) }
+            }
+        }
+        dm.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        onDispose { dm.unregisterDisplayListener(listener) }
+    }
 
     Box(modifier.fillMaxSize()) {
         AndroidView(

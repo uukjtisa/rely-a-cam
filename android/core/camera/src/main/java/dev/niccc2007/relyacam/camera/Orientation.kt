@@ -81,8 +81,11 @@ object Upright {
         val m = Matrix()
         m.postScale(cw / viewW, ch / viewH)
         m.postTranslate(-cw / 2, -ch / 2)
-        if (cam.front) m.postScale(-1f, 1f)
+        // Turn for the screen first, then un-mirror a front camera across the SCREEN's vertical
+        // axis. The other order mirrors across the sensor's axis, which is the screen's horizontal
+        // axis when the phone is sideways, and leaves the picture upside down in landscape.
         m.postRotate(-displayDegrees.toFloat())
+        if (cam.front) m.postScale(-1f, 1f)
         if (mirror) m.postScale(-1f, 1f)
         if (flip) m.postScale(1f, -1f)
         val turned = displayDegrees % 180 != 0

@@ -9,6 +9,7 @@ import android.media.ImageReader
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import androidx.core.content.ContextCompat
@@ -85,7 +86,7 @@ data class UiState(
 
 /**
  * Everything the app does, in one place: scanning, connecting, streaming and applying requests.
- * The phone owns the camera's state (D-02), and a request from the PC and a tap on the phone go
+ * The phone owns the camera's state, and a request from the PC and a tap on the phone go
  * through the same [apply], so both sides always agree.
  *
  * Mutations run on one thread (the engine thread); the UI only reads [ui].
@@ -162,6 +163,12 @@ object Engine : CameraEvents, LinkEvents {
     }
 
     // ---- scanning -------------------------------------------------------------------------
+
+    /** Cameras that failed to stream this run, and modes a camera refused (see dropCamera). */
+    private val broken = mutableSetOf<String>()
+    private val failedModes = mutableMapOf<String, MutableSet<String>>()
+    private var lastErrorCam: String? = null
+    private var lastErrorAt = 0L
 
     private fun scanCam(): CameraInfo? = s.cams.firstOrNull { !it.front } ?: s.cams.firstOrNull()
 
@@ -551,14 +558,73 @@ object Engine : CameraEvents, LinkEvents {
     override fun onError(info: CameraInfo, message: String) = post {
         Log.w(TAG, "camera ${info.id}: $message")
         if (!info.listed) {
-            // An unlisted camera that answered but won't stream: drop it and use the next one (D-04).
-            val rest = s.cams.filter { it.id != info.id }
-            set { it.copy(cams = rest, notice = "${info.label} isn't usable on this phone; switched.") }
-            if (live && rest.isNotEmpty()) { applyNow(Cmd(cam = (rest.firstOrNull { !it.front } ?: rest.first()).id), false); sendCaps() }
-            else if (!live) startScan()
+            // Often transient (the scanner's session still closing as the live one opens), so the
+            // same camera gets one more try. A second failure within 10 s drops it.
+            val now = SystemClock.elapsedRealtime()
+            val again = lastErrorCam == info.id && now - lastErrorAt < 10_000
+            lastErrorCam = info.id
+            lastErrorAt = now
+            if (!again) {
+                h.postDelayed({ runCatching { if (live) openCamera() else if (s.screen == Screen.SCAN) startScan() } }, 500)
+                return@post
+            }
+            dropCamera(info, "${info.label} isn't usable on this phone; switched.")
             return@post
         }
         set { it.copy(notice = message) }
+    }
+
+    /**
+     * The camera refused this quality. That's a fact about one mode, not about the camera: take
+     * the mode off that camera's list and step down to the next one, and only when none is left
+     * give up on the camera.
+     */
+    override fun onConfigFailed(info: CameraInfo) = post {
+        Log.w(TAG, "camera ${info.id}: session refused ${s.mode}")
+        val cam = s.cams.firstOrNull { it.id == info.id } ?: return@post
+        if (!live) { dropCamera(cam, "${cam.label} can't run the scanner on this phone; switched."); return@post }
+        val failed = Mode.parse(s.mode) ?: return@post
+        failedModes.getOrPut(cam.id) { mutableSetOf() } += failed.toString()
+        val left = cam.modes.filter { it.toString() != failed.toString() }
+        if (left.isEmpty()) { dropCamera(cam, "${cam.label} won't stream on this phone; switched."); return@post }
+        val trimmed = cam.copy(modes = left)
+        val cost = { w: Int, h: Int, fps: Int -> w.toLong() * h * fps }
+        val next = (left.filter { cost(it.w, it.h, it.fps) < cost(failed.w, failed.h, failed.fps) }
+            .maxByOrNull { cost(it.w, it.h, it.fps) } ?: left.first()).toString()
+        val label = Mode.parse(next)?.label ?: next
+        set {
+            it.copy(
+                cams = it.cams.map { c -> if (c.id == cam.id) trimmed else c },
+                cam = if (it.cam?.id == cam.id) trimmed else it.cam,
+                mode = next, codec = pickCodec(it.codec, next),
+                notice = "${cam.label} can't send ${failed.label} on this phone; using $label.",
+            )
+        }
+        sendCaps()
+        openCamera()
+        sendState(force = true)
+    }
+
+    /**
+     * Gives up on a camera for this run. Discovery runs again without it, so when it was a logical
+     * camera its own lenses come back (dropping the nova 10's hidden camera 4 must still leave its
+     * 1x back camera, not just the front one). The replacement faces the same way when it can.
+     */
+    private fun dropCamera(info: CameraInfo, notice: String) {
+        broken += info.id
+        val cams = CameraCatalog.discover(app, broken)
+            .map { c -> c.copy(modes = c.modes.filter { it.toString() !in failedModes[c.id].orEmpty() }) }
+            .filter { it.modes.isNotEmpty() }
+        Log.i(TAG, "dropped camera ${info.id}; now: " + cams.joinToString { "${it.id}:${it.label}" })
+        set { it.copy(cams = cams, notice = notice) }
+        if (live) {
+            val repl = cams.firstOrNull { it.facing == info.facing } ?: cams.firstOrNull { !it.front } ?: cams.firstOrNull()
+            if (repl == null) { set { it.copy(notice = "No camera on this phone will stream.") }; return }
+            applyNow(Cmd(cam = repl.id), false)
+            sendCaps()
+        } else {
+            startScan()
+        }
     }
 
     private fun needKeyFrame() { venc?.requestKeyFrame() }

@@ -38,6 +38,8 @@ interface CameraEvents {
     fun onZoom(zoom: Double) {}
     fun onOpened(info: CameraInfo) {}
     fun onError(info: CameraInfo, message: String) {}
+    /** The camera opened but refused these outputs (size or rate): the camera itself is fine. */
+    fun onConfigFailed(info: CameraInfo) {}
 }
 
 /**
@@ -238,9 +240,12 @@ class CameraController(context: Context, private val events: CameraEvents) {
                     events.onZoom(zoom)
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
-                    info?.let { events.onError(it, "The camera refused this quality setting.") }
+                    if (gen == generation) info?.let { events.onConfigFailed(it) }
                 }
             }, handler)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "session", e)
+            info?.let { events.onConfigFailed(it) }
         } catch (e: Exception) {
             Log.w(TAG, "session", e)
             info?.let { events.onError(it, e.message ?: "The camera session failed.") }

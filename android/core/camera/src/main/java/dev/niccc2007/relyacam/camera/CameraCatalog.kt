@@ -52,7 +52,7 @@ data class CameraInfo(
 }
 
 /**
- * Finds the cameras worth offering (DECISIONS.md D-04).
+ * Finds the cameras worth offering.
  *
  * `getCameraIdList()` is not the whole story: some phones leave openable cameras out of it (the
  * owner's nova 10 lists [0, 1] while its logical camera 4 reaches the 0.65x ultrawide). So ids
@@ -70,10 +70,14 @@ object CameraCatalog {
     private val SIZES = listOf(Size(1280, 720), Size(1920, 1080), Size(2560, 1440), Size(3840, 2160))
     private val RATES = listOf(30, 60)
 
-    fun discover(context: Context): List<CameraInfo> {
+    /**
+     * Every usable camera. [exclude] leaves out cameras that failed to stream this run; the
+     * physical lenses of an excluded logical camera are then offered again instead of hidden.
+     */
+    fun discover(context: Context, exclude: Set<String> = emptySet()): List<CameraInfo> {
         val mgr = context.getSystemService(CameraManager::class.java)
         val listed = runCatching { mgr.cameraIdList.toList() }.getOrDefault(emptyList())
-        val ids = (listed + (0 until PROBE_IDS).map { it.toString() }).distinct()
+        val ids = (listed + (0 until PROBE_IDS).map { it.toString() }).distinct().filter { it !in exclude }
         val enc = EncoderSupport()
         val read = ids.mapNotNull { id ->
             runCatching { read(mgr, id, id in listed, enc) }

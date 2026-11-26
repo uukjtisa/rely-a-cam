@@ -667,7 +667,7 @@ void PhoneDock::refresh()
 		presetRow_->addStretch(1);
 	}
 
-	// Zoom value, slider and the dock-only prediction (D-03).
+	// Zoom value, slider and the dock-only prediction.
 	double shown = v ? v->state.zoom : 1;
 	double scale = 1;
 	if (v && requested_ > 0) {

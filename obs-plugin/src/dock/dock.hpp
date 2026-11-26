@@ -1,4 +1,4 @@
-// The "Phone Camera" dock (DECISIONS.md D-06): one widget that is layouts A, B and C at once.
+// The "Phone Camera" dock: one widget that is layouts A, B and C at once.
 // A preview toggle gives A (with preview) or B (slim); OBS's own dock floating gives C.
 // Colours come from OBS's palette (AGENTS.md rule 5); the QR is the one exception, because a
 // scanner needs dark modules on a light background.
@@ -136,7 +136,7 @@ private:
 	std::string presetKey_;
 	std::string chipsKey_;
 
-	// Zoom prediction (D-03): what was asked, when, and what the phone last reported.
+	// Zoom prediction: what was asked, when, and what the phone last reported.
 	double requested_ = 0;
 	QElapsedTimer requestedAt_;
 	double pendingSend_ = 0;

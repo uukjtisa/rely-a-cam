@@ -917,7 +917,7 @@ void PhoneLink::enqueue(Type t, std::vector<uint8_t> &&p)
 				waitKey_ = false;
 			size_t videos = size_t(std::count_if(jobs_.begin(), jobs_.end(), [](const Job &j) { return j.type == Type::Video; }));
 			if (videos > 12) {
-				// Decoding fell behind: skip to the next key frame rather than run late (D-05).
+				// Decoding fell behind: skip to the next key frame rather than run late.
 				jobs_.erase(std::remove_if(jobs_.begin(), jobs_.end(), [](const Job &j) { return j.type == Type::Video; }),
 					    jobs_.end());
 				if (!key) {

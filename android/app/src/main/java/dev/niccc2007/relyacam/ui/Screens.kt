@@ -293,7 +293,7 @@ private fun QualityDialog(s: UiState, close: () -> Unit) {
     )
 }
 
-/** Black-screen mode (D-09): the screen stays on but shows black, with text that drifts. */
+/** Black-screen mode: the screen stays on but shows black, with text that drifts. */
 @Composable
 private fun BlackScreen(s: UiState) {
     val t = rememberInfiniteTransition(label = "drift")

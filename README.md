@@ -43,8 +43,7 @@ connect.
 The phone encodes H.264 or HEVC (and AAC for the mic) with its hardware encoder and sends it
 over one TCP connection to the plugin, which decodes it with the FFmpeg that OBS already ships.
 The phone owns the camera and its zoom: OBS sends requests, and both screens show the value
-the phone reports. The full wire format is in [protocol/PROTOCOL.md](protocol/PROTOCOL.md), and
-the reasons behind each design choice are in [DECISIONS.md](DECISIONS.md).
+the phone reports. The full wire format is in [protocol/PROTOCOL.md](protocol/PROTOCOL.md).
 
 ## Build it yourself
 

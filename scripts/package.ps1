@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   1. Checks the plugin version (obs-plugin\buildspec.json) and the app version
-     (android\app\build.gradle.kts) agree: one release tag covers both halves (DECISIONS.md D-07).
+     (android\app\build.gradle.kts) agree: one release tag covers both halves.
   2. Builds the plugin (CMake, RelWithDebInfo) and the signed release APK (Gradle).
   3. Stages the plugin folder: the DLL, its locale, the APK (served to phones from the PC and
      installed over USB), and adb from the Android SDK's platform-tools (Apache-2.0).

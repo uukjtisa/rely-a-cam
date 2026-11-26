@@ -41,7 +41,7 @@ interface LinkEvents {
 }
 
 /**
- * One TCP connection to one PC (DECISIONS.md D-05). Two threads: a reader for commands and a
+ * One TCP connection to one PC. Two threads: a reader for commands and a
  * writer that owns the socket's output. Video never queues past [MAX_QUEUE_US]: past that, frames
  * are dropped up to the next key frame and the encoder is asked for one.
  */

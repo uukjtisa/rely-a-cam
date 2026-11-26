@@ -32,7 +32,6 @@ protocol/            PROTOCOL.md + golden test vectors both halves must pass
 docs/                design notes; mock.html is the approved visual reference
 scripts/             package.ps1 (both halves -> release/), release.ps1 (GitHub release)
 .github/workflows/   CI: builds both halves and runs both sides of the vectors
-DECISIONS.md         every consequential call, why, and what it costs
 ```
 
 ## Ground rules
@@ -42,8 +41,8 @@ DECISIONS.md         every consequential call, why, and what it costs
    (lens stops, plus 2x when in range and not within 20% of a lens). A literal like `0.5f`,
    `"1080p"` or a camera ID in feature code is a bug.
 2. **Camera discovery goes through Camera2 directly, never CameraX.** CameraX only sees
-   `getCameraIdList()`, and some phones hide openable cameras from that list (see DECISIONS.md
-   D-04). Discovery also tries unlisted IDs, and hides cameras by rule, never by ID: the physical
+   `getCameraIdList()`, and some phones hide openable cameras from that list. Discovery also
+   tries unlisted IDs, and hides cameras by rule, never by ID: the physical
    members of an offered logical camera, and sensors whose largest output is under 720p.
 3. **The phone owns the zoom value.** The plugin sends requests, and both screens draw what the
    phone reports. The dock preview may *predict* a requested zoom; the program output (what
@@ -100,5 +99,8 @@ DECISIONS.md         every consequential call, why, and what it costs
 
 ## Docs
 
-`SETUP.md` is for people (one-click setup); this file is for agents; `DECISIONS.md` explains why;
-`protocol/PROTOCOL.md` defines the wire format.
+`README.md` and `SETUP.md` are for people; this file is for agents; `protocol/PROTOCOL.md`
+defines the wire format; `docs/` holds the design standard and the mock.
+
+Agent-private files (assistant notes, decision logs, the local issue list) stay out of git and
+are never linked from tracked files.

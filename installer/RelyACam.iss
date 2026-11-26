@@ -3,7 +3,7 @@
 ;
 ; Installs the plugin where OBS 28+ looks for third-party plugins on Windows
 ; (%ProgramData%\obs-studio\plugins\rely-a-cam), adds the two inbound firewall rules phones need
-; (DECISIONS.md D-13), and removes both on uninstall. It never touches OBS's own folder or scenes.
+;, and removes both on uninstall. It never touches OBS's own folder or scenes.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

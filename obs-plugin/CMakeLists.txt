@@ -56,7 +56,7 @@ target_sources(
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
-# The wire format against protocol/vectors, shared with the phone app's tests (D-07).
+# The wire format against protocol/vectors, shared with the phone app's tests.
 if(RAC_BUILD_TESTS)
   add_executable(rac-protocol-test tests/protocol_test.cpp src/net/protocol.cpp)
   target_include_directories(rac-protocol-test PRIVATE ${NLOHMANN_INCLUDE_DIR} src)

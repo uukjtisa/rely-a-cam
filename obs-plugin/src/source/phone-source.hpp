@@ -1,5 +1,5 @@
 // The OBS source: one per phone. Draws the newest picture, turned upright and mirrored or flipped
-// as the phone says (DECISIONS.md D-10), and plays the phone's mic. Remembers the phone's camera
+// as the phone says, and plays the phone's mic. Remembers the phone's camera
 // settings in the scene collection, so OBS gives them back on reconnect.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once

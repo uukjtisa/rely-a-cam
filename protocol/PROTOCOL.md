@@ -108,7 +108,7 @@ the same way on both sides:
   lens facing. While `lock` is true it stops following the device.
 - `mirror` (left-right) and `flip` (upside-down) are applied after `rot`, in the upright picture.
 - Frames are sent as the sensor produces them, and the PC does the turning when it draws. That
-  costs the phone nothing (DECISIONS.md D-10).
+  costs the phone nothing.
 
 ## Sequence
 

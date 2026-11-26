@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 
 #include <QMainWindow>
+#include <QTimer>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -39,6 +40,10 @@ static void onFrontendEvent(enum obs_frontend_event event, void *)
 	// Stop before OBS tears down: every phone gets BYE and releases its camera and mic.
 	if (event == OBS_FRONTEND_EVENT_EXIT)
 		rac::Hub::get().stop();
+	// OBS restores its saved dock layout after loading plugins, and a plugin dock starts hidden.
+	// Reveal it after that, once ever, so a first-time user lands on the pairing QR.
+	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING)
+		QTimer::singleShot(500, [] { rac::PhoneDock::introduceOnce(); });
 }
 
 bool obs_module_load(void)

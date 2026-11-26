@@ -460,6 +460,8 @@ void Hub::sourceChanged()
 		for (auto *s : sources_) {
 			auto it = views_.find(s->device());
 			s->setConnected(it != views_.end() && it->second.connected);
+			if (it != views_.end())
+				s->setTransform(it->second.state.rot, it->second.state.mirror, it->second.state.flip);
 		}
 	}
 	emit phonesChanged();
@@ -566,14 +568,46 @@ static void createSourceFor(const std::string &device, const std::string &name)
 
 void Hub::ensureSource(const std::string &device, const std::string &name)
 {
+	obs_weak_source_t *unassigned = nullptr;
 	{
 		std::lock_guard<std::mutex> l(m_);
 		for (auto *s : sources_)
 			if (s->device() == device)
 				return;
+		// A source the owner added by hand with no phone picked: the next phone takes it, so a
+		// first pairing never leaves a dead source beside an auto-added one.
+		for (auto *s : sources_)
+			if (s->device().empty()) {
+				unassigned = obs_source_get_weak_source(s->obs());
+				break;
+			}
 	}
-	QMetaObject::invokeMethod(QCoreApplication::instance(), [device, name] { createSourceFor(device, name); },
-				  Qt::QueuedConnection);
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(),
+		[device, name, unassigned] {
+			if (unassigned) {
+				obs_source_t *src = obs_weak_source_get_source(unassigned);
+				obs_weak_source_release(unassigned);
+				if (src) {
+					obs_data_t *cur = obs_source_get_settings(src);
+					const bool stillFree = !*obs_data_get_string(cur, "device");
+					obs_data_release(cur);
+					if (stillFree) {
+						obs_data_t *s = obs_data_create();
+						obs_data_set_string(s, "device", device.c_str());
+						obs_source_update(src, s);
+						obs_data_release(s);
+						obs_log(LOG_INFO, "a new phone took the unassigned source '%s'",
+							obs_source_get_name(src));
+						obs_source_release(src);
+						return;
+					}
+					obs_source_release(src);
+				}
+			}
+			createSourceFor(device, name);
+		},
+		Qt::QueuedConnection);
 }
 
 // ============================================================================================

@@ -78,6 +78,14 @@ public:
 	explicit PhoneDock(QWidget *parent = nullptr);
 	~PhoneDock() override;
 
+	/**
+	 * Shows the dock (OBS keeps a new plugin dock hidden until it's ticked in the Docks menu) and,
+	 * with pair = true, opens the Add phone QR. UI thread only. Safe before the dock exists.
+	 */
+	static void reveal(bool pair);
+	/** On the first run ever, reveals the dock with the QR up, so pairing is never a hunt. */
+	static void introduceOnce();
+
 protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
@@ -91,6 +99,7 @@ private:
 	void flushZoom();
 	void onPreview(const QString &device, const QImage &img);
 	void setPreviewVisible(bool on);
+	void saveConfig();
 	void message(const QString &text);
 	void checkFirewall();
 	void checkForUpdate();
@@ -134,6 +143,7 @@ private:
 	QElapsedTimer lastSent_;
 	bool sliderDragging_ = false;
 	bool previewOn_ = true;
+	bool introduced_ = false;
 	std::string updateTag_, updateUrl_;
 };
 

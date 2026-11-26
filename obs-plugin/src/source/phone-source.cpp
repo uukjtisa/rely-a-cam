@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "phone-source.hpp"
 
+#include "../dock/dock.hpp"
 #include "../net/hub.hpp"
 
 #include <graphics/matrix4.h>
@@ -263,8 +264,21 @@ void PhoneSource::registerSource()
 		obs_properties_t *p = obs_properties_create();
 		obs_property_t *list = obs_properties_add_list(p, "device", obs_module_text("Phone"), OBS_COMBO_TYPE_LIST,
 							       OBS_COMBO_FORMAT_STRING);
-		for (auto &ph : Hub::get().phones())
-			obs_property_list_add_string(list, ph.name.c_str(), ph.device.c_str());
+		const auto phones = Hub::get().phones();
+		if (phones.empty()) {
+			obs_property_list_add_string(list, obs_module_text("NoPhoneYet"), "");
+		} else {
+			obs_property_list_add_string(list, obs_module_text("FirstPhoneToConnect"), "");
+			for (auto &ph : phones)
+				obs_property_list_add_string(list, ph.name.c_str(), ph.device.c_str());
+		}
+		obs_properties_add_button2(
+			p, "pair", obs_module_text(phones.empty() ? "PairPhone" : "OpenDock"),
+			[](obs_properties_t *, obs_property_t *, void *) {
+				PhoneDock::reveal(Hub::get().phones().empty());
+				return false;
+			},
+			nullptr);
 		obs_properties_add_text(p, "help", obs_module_text("SourceHelp"), OBS_TEXT_INFO);
 		return p;
 	};

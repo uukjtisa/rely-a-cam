@@ -9,6 +9,7 @@
 #include <util/platform.h>
 
 #include <QComboBox>
+#include <QDockWidget>
 #include <QDir>
 #include <QFile>
 #include <QGestureEvent>
@@ -199,6 +200,35 @@ static std::string dockConfigPath()
 	return s;
 }
 
+static QPointer<PhoneDock> theDock;
+
+void PhoneDock::reveal(bool pair)
+{
+	PhoneDock *d = theDock;
+	if (!d)
+		return;
+	// The widget OBS wraps it in is the QDockWidget; showing that also ticks Docks > Phone Camera.
+	if (auto *dw = qobject_cast<QDockWidget *>(d->parentWidget())) {
+		dw->setVisible(true);
+		dw->raise();
+		dw->activateWindow();
+	} else {
+		d->show();
+	}
+	if (pair && !d->addBtn_->isChecked())
+		d->addBtn_->setChecked(true);
+}
+
+void PhoneDock::introduceOnce()
+{
+	PhoneDock *d = theDock;
+	if (!d || d->introduced_)
+		return;
+	d->introduced_ = true;
+	d->saveConfig();
+	reveal(d->phones_.empty());
+}
+
 static QToolButton *toggle(const QString &text, const QString &tip)
 {
 	auto *b = new QToolButton();
@@ -211,6 +241,7 @@ static QToolButton *toggle(const QString &text, const QString &tip)
 
 PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 {
+	theDock = this;
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(6, 6, 6, 6);
 	root->setSpacing(6);
@@ -333,8 +364,10 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 		QFile f(QString::fromStdString(dockConfigPath()));
 		if (f.open(QIODevice::ReadOnly)) {
 			json j = json::parse(f.readAll().toStdString(), nullptr, false);
-			if (j.is_object())
+			if (j.is_object()) {
 				previewOn_ = j.value("preview", true);
+				introduced_ = j.value("introduced", false);
+			}
 		}
 	}
 	previewBtn_->setChecked(previewOn_);
@@ -710,9 +743,14 @@ void PhoneDock::setPreviewVisible(bool on)
 	preview_->setVisible(on);
 	stack_->setVisible(on || addBtn_->isChecked());
 	Hub::get().setPreviewWanted(on && isVisible());
+	saveConfig();
+}
+
+void PhoneDock::saveConfig()
+{
 	QFile f(QString::fromStdString(dockConfigPath()));
 	if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-		f.write(QByteArray::fromStdString(json{{"preview", on}}.dump()));
+		f.write(QByteArray::fromStdString(json{{"preview", previewOn_}, {"introduced", introduced_}}.dump()));
 }
 
 void PhoneDock::showAddPanel(bool on)

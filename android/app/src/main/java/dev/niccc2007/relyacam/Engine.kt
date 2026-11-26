@@ -1,0 +1,686 @@
+package dev.niccc2007.relyacam
+
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
+import android.media.ImageReader
+import android.os.BatteryManager
+import android.os.Handler
+import android.os.HandlerThread
+import android.util.Log
+import android.view.Surface
+import androidx.core.content.ContextCompat
+import dev.niccc2007.relyacam.camera.CameraCatalog
+import dev.niccc2007.relyacam.camera.CameraController
+import dev.niccc2007.relyacam.camera.CameraEvents
+import dev.niccc2007.relyacam.camera.CameraInfo
+import dev.niccc2007.relyacam.camera.DeviceOrientation
+import dev.niccc2007.relyacam.camera.EncoderSupport
+import dev.niccc2007.relyacam.camera.Outputs
+import dev.niccc2007.relyacam.camera.Purpose
+import dev.niccc2007.relyacam.camera.Upright
+import dev.niccc2007.relyacam.protocol.CamCaps
+import dev.niccc2007.relyacam.protocol.CamState
+import dev.niccc2007.relyacam.protocol.Caps
+import dev.niccc2007.relyacam.protocol.Cmd
+import dev.niccc2007.relyacam.protocol.Discovery
+import dev.niccc2007.relyacam.protocol.Hello
+import dev.niccc2007.relyacam.protocol.Mode
+import dev.niccc2007.relyacam.protocol.Pairing
+import dev.niccc2007.relyacam.protocol.Welcome
+import dev.niccc2007.relyacam.qr.Luma
+import dev.niccc2007.relyacam.qr.QrDecode
+import dev.niccc2007.relyacam.stream.AudioEncoder
+import dev.niccc2007.relyacam.stream.Finder
+import dev.niccc2007.relyacam.stream.Link
+import dev.niccc2007.relyacam.stream.LinkEvents
+import dev.niccc2007.relyacam.stream.Reach
+import dev.niccc2007.relyacam.stream.ReachException
+import dev.niccc2007.relyacam.stream.VideoEncoder
+import dev.niccc2007.relyacam.update.Release
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+enum class Screen { SCAN, CONNECTING, LIVE, UNREACHABLE, WAITING, GET_PLUGIN }
+
+/** A failed connection, worded for a person (AGENTS.md rule 7). */
+data class Problem(val reach: Reach?, val message: String, val pairing: Pairing?, val sameNetwork: Boolean)
+
+data class UiState(
+    val screen: Screen = Screen.SCAN,
+    val cams: List<CameraInfo> = emptyList(),
+    val cam: CameraInfo? = null,
+    val zoom: Double = 1.0,
+    val torch: Boolean = false,
+    val mic: Boolean = true,
+    val micAllowed: Boolean = false,
+    val cameraAllowed: Boolean = false,
+    val mode: String = "",
+    val codec: String = "h264",
+    val codecs: List<String> = emptyList(),
+    val rot: Int = 0,
+    val mirror: Boolean = false,
+    val flip: Boolean = false,
+    val lock: Boolean = false,
+    val pcName: String = "",
+    val transport: String = "",
+    val reconnecting: Boolean = false,
+    val problem: Problem? = null,
+    val recent: List<SavedPc> = emptyList(),
+    val black: Boolean = false,
+    val temp: Double = 0.0,
+    val battery: Int = -1,
+    val rttMs: Long = 0,
+    val kbps: Int = 0,
+    val update: Release? = null,
+    val notice: String? = null,
+    val previewW: Int = 1280,
+    val previewH: Int = 720,
+)
+
+/**
+ * Everything the app does, in one place: scanning, connecting, streaming and applying requests.
+ * The phone owns the camera's state (D-02), and a request from the PC and a tap on the phone go
+ * through the same [apply], so both sides always agree.
+ *
+ * Mutations run on one thread (the engine thread); the UI only reads [ui].
+ */
+object Engine : CameraEvents, LinkEvents {
+    private const val TAG = "RelyCam"
+    private const val GIVE_UP_CAMERA_MS = 60_000L
+
+    private lateinit var app: Context
+    lateinit var prefs: Prefs; private set
+    private lateinit var camera: CameraController
+    private lateinit var orientation: DeviceOrientation
+    private val thread = HandlerThread("relyacam-engine").apply { start() }
+    private val h = Handler(thread.looper)
+    private val qrThread = HandlerThread("relyacam-qr").apply { start() }
+    private val qrHandler = Handler(qrThread.looper)
+
+    private val _ui = MutableStateFlow(UiState())
+    val ui: StateFlow<UiState> = _ui
+
+    private var visible = false
+    private var preview: SurfaceTexture? = null
+    private var previewSurface: Surface? = null
+    private var reader: ImageReader? = null
+    private var encoderCodecs: List<String> = emptyList()
+
+    private var link: Link? = null
+    private var pairing: Pairing? = null
+    private var welcome: Welcome? = null
+    private var venc: VideoEncoder? = null
+    private var aenc: AudioEncoder? = null
+    private var live = false
+    private var attempt = 0
+    private var droppedAt = 0L
+    private val zooms = mutableMapOf<String, Double>()
+    private var lastStateAt = 0L
+    private var lastBytes = 0L
+
+    fun init(context: Context) {
+        if (::app.isInitialized) return
+        app = context.applicationContext
+        prefs = Prefs(app)
+        camera = CameraController(app, this)
+        orientation = DeviceOrientation(app) { post { onDeviceTurned() } }
+        _ui.update { it.copy(recent = prefs.pcs()) }
+    }
+
+    private fun post(block: () -> Unit) { h.post { runCatching(block).onFailure { Log.e(TAG, "engine", it) } } }
+    private fun set(f: (UiState) -> UiState) = _ui.update(f)
+    private val s get() = _ui.value
+
+    // ---- permissions and visibility -------------------------------------------------------
+
+    fun onPermissions(cameraOk: Boolean, micOk: Boolean) = post {
+        val first = !s.cameraAllowed && cameraOk
+        set { it.copy(cameraAllowed = cameraOk, micAllowed = micOk) }
+        if (first) {
+            val cams = CameraCatalog.discover(app)
+            encoderCodecs = EncoderSupport().codecs()
+            Log.i(TAG, "cameras: " + cams.joinToString { "${it.id}:${it.label} ${it.zoomMin}-${it.zoomMax} ${it.lenses} ${it.modes}" })
+            set { it.copy(cams = cams, codecs = encoderCodecs) }
+            val last = prefs.pcs().firstOrNull()
+            if (last != null && prefs.wasLive) connectNow(last.pairing, quiet = true) else if (visible) startScan()
+        }
+    }
+
+    fun onVisible(v: Boolean) = post {
+        visible = v
+        if (!v) {
+            if (s.screen == Screen.SCAN || s.screen == Screen.GET_PLUGIN) camera.close()
+        } else if (s.screen == Screen.SCAN) {
+            startScan()
+        }
+    }
+
+    // ---- scanning -------------------------------------------------------------------------
+
+    private fun scanCam(): CameraInfo? = s.cams.firstOrNull { !it.front } ?: s.cams.firstOrNull()
+
+    private fun startScan() {
+        if (!s.cameraAllowed || !visible) return
+        val cam = scanCam() ?: return
+        val size = camera.previewSize(cam, 16, 9, 1920 * 1080)
+        preview?.setDefaultBufferSize(size.width, size.height)
+        reader?.close()
+        val rs = camera.analysisSize(cam, 16, 9, 1280 * 720)
+        val r = ImageReader.newInstance(rs.width, rs.height, ImageFormat.YUV_420_888, 2)
+        r.setOnImageAvailableListener(QrReader, qrHandler)
+        reader = r
+        val z = 1.0.coerceIn(cam.zoomMin, cam.zoomMax)
+        set { it.copy(screen = Screen.SCAN, cam = cam, zoom = z, torch = false, previewW = size.width, previewH = size.height) }
+        camera.open(cam, Purpose.SCAN, Outputs(preview = previewSurface, reader = r.surface), 30, z)
+    }
+
+    private fun stopScan() {
+        camera.closeAndWait()
+        reader?.close()
+        reader = null
+    }
+
+    fun showScan() = post {
+        if (live) return@post
+        attempt++
+        set { it.copy(problem = null, reconnecting = false) }
+        startScan()
+    }
+
+    fun showGetPlugin(on: Boolean) = post {
+        if (live) return@post
+        if (on) { camera.close(); set { it.copy(screen = Screen.GET_PLUGIN) } } else startScan()
+    }
+
+    /** One decoded frame at a time; frames that arrive while one is being read are skipped. */
+    private object QrReader : ImageReader.OnImageAvailableListener {
+        private var buf = ByteArray(0)
+        private val scratch = Luma.Scratch()
+        private var frame = 0L
+
+        override fun onImageAvailable(r: ImageReader) {
+            val img = runCatching { r.acquireLatestImage() }.getOrNull() ?: return
+            val text = try {
+                val plane = img.planes[0]
+                val stride = plane.rowStride
+                val need = stride * img.height
+                if (buf.size < need) buf = ByteArray(need)
+                val src = plane.buffer
+                src.rewind()
+                src.get(buf, 0, minOf(src.remaining(), need))
+                QrDecode.fromLuma(buf, stride, img.width, img.height, frame++, scratch)
+            } finally {
+                img.close()
+            }
+            if (text != null) onQrText(text)
+        }
+    }
+
+    fun onQrText(text: String) = post {
+        if (s.screen != Screen.SCAN) return@post
+        val p = Pairing.parse(text) ?: return@post
+        connectNow(p, quiet = false)
+    }
+
+    /** A pairing link opened from outside (another scanner app, or the PC over USB). */
+    fun onLink(uri: String) = post {
+        val p = Pairing.parse(uri) ?: return@post
+        if (live) {
+            if (p.pcId == pairing?.pcId) return@post
+            stopLive(sayBye = true)
+        }
+        connectNow(p, quiet = false)
+    }
+
+    fun connectByCode(code: String) = post {
+        if (!Discovery.isCode(code)) { set { it.copy(notice = "A code is 6 letters and numbers, like K7Q-2MX.") }; return@post }
+        set { it.copy(screen = Screen.CONNECTING, pcName = "code ${code.uppercase()}") }
+        stopScan()
+        val myAttempt = ++attempt
+        Thread {
+            val p = runCatching { Finder.byCode(code) }.getOrNull()
+            post {
+                if (myAttempt != attempt) return@post
+                if (p == null) {
+                    fail(null, ReachException(Reach.TIMEOUT, "No PC answered that code. Check the code, and that the Add phone panel is open in OBS."))
+                } else connectNow(p, quiet = false)
+            }
+        }.start()
+    }
+
+    fun connectSaved(p: Pairing) = post { connectNow(p, quiet = false) }
+
+    fun forget(pcId: String) = post {
+        prefs.forget(pcId)
+        set { it.copy(recent = prefs.pcs()) }
+    }
+
+    // ---- connecting -----------------------------------------------------------------------
+
+    private fun hello() = Hello(
+        secret = pairing?.secret.orEmpty(), device = prefs.deviceId, name = prefs.deviceName,
+        app = BuildConfig.VERSION_NAME,
+    )
+
+    private fun connectNow(p: Pairing, quiet: Boolean) {
+        stopScan()
+        pairing = p
+        val myAttempt = ++attempt
+        set { it.copy(screen = Screen.CONNECTING, pcName = p.pcName.ifEmpty { p.hosts.first() }, problem = null) }
+        Thread {
+            var target = p
+            var result = runCatching { Link.connect(target, hello(), this, ::needKeyFrame) }
+            // A paired PC may have a new address: ask the network where it is now.
+            if (result.isFailure && p.pcId.isNotEmpty() && (result.exceptionOrNull() as? ReachException)?.reach !in setOf(Reach.AUTH, Reach.VERSION)) {
+                Finder.byId(p)?.let { fresh ->
+                    if (fresh.hosts != p.hosts) {
+                        target = fresh
+                        result = runCatching { Link.connect(fresh, hello(), this, ::needKeyFrame) }
+                    }
+                }
+            }
+            post {
+                if (myAttempt != attempt) { result.getOrNull()?.close(); return@post }
+                result.fold(
+                    onSuccess = { l -> pairing = target; onConnected(l) },
+                    onFailure = { e ->
+                        if (quiet) {
+                            set { it.copy(notice = "Couldn't reach ${p.pcName.ifEmpty { "the PC" }}. Scan to connect.") }
+                            prefs.wasLive = false
+                            startScan()
+                        } else fail(p, e)
+                    },
+                )
+            }
+        }.start()
+    }
+
+    private fun fail(p: Pairing?, e: Throwable) {
+        val r = (e as? ReachException)?.reach
+        val same = p?.let { Finder.sharesSubnet(it.hosts) } ?: true
+        set { it.copy(screen = Screen.UNREACHABLE, problem = Problem(r, e.message ?: "Could not reach the PC.", p, same)) }
+    }
+
+    fun retry() = post {
+        val p = s.problem?.pairing ?: pairing ?: return@post
+        connectNow(p, quiet = false)
+    }
+
+    private fun onConnected(l: Link) {
+        link = l
+        welcome = l.welcome
+        val p = pairing!!
+        prefs.remember(p)
+        set { it.copy(recent = prefs.pcs(), pcName = l.welcome.pc.ifEmpty { p.pcName }, transport = Finder.transportName(app, p.hosts.firstOrNull()), reconnecting = false, notice = null) }
+        if (live) {
+            // Back after a drop: the phone's state is the freshest, so it is sent, not replaced.
+            sendCaps()
+            sendVideoConfig()
+            sendState(force = true)
+            venc?.requestKeyFrame()
+            return
+        }
+        startLive(l.welcome.restore)
+    }
+
+    // ---- live -----------------------------------------------------------------------------
+
+    private fun startLive(restore: Cmd) {
+        val cams = s.cams
+        if (cams.isEmpty()) { fail(pairing, ReachException(Reach.OTHER, "This phone reported no usable camera.")); return }
+        zooms.clear(); zooms.putAll(restore.zooms)
+        val cam = cams.firstOrNull { it.id == restore.cam } ?: cams.firstOrNull { !it.front } ?: cams.first()
+        val mode = pickMode(cam, restore.mode)
+        val codec = pickCodec(restore.codec, mode)
+        val zoom = (restore.zoom ?: zooms[cam.id] ?: 1.0).coerceIn(cam.zoomMin, cam.zoomMax)
+        live = true
+        prefs.wasLive = true
+        set {
+            it.copy(
+                screen = Screen.LIVE, cam = cam, mode = mode, codec = codec, zoom = zoom, torch = false,
+                mirror = restore.mirror ?: false, flip = restore.flip ?: false, lock = restore.lock ?: false,
+                mic = restore.mic ?: true, black = false,
+            )
+        }
+        LiveService.start(app, s.pcName, s.micAllowed)
+        orientation.start()
+        set { it.copy(rot = Upright.streamRotation(cam, orientation.degrees)) }
+        sendCaps()
+        openCamera()
+        if (s.mic && s.micAllowed) startAudio()
+        sendState(force = true)
+        h.removeCallbacks(tick)
+        h.postDelayed(tick, 1000)
+    }
+
+    private fun pickMode(cam: CameraInfo, wanted: String?): String {
+        val modes = cam.modes.map { it.toString() }
+        return wanted?.takeIf { it in modes } ?: Mode.default(modes) ?: modes.first()
+    }
+
+    private fun pickCodec(wanted: String?, mode: String): String {
+        val m = Mode.parse(mode)
+        val pc = welcome?.codecs.orEmpty()
+        val ok = { c: String -> c in encoderCodecs && (pc.isEmpty() || c in pc) && (m == null || EncoderSupport().codecSupports(c, m.w, m.h, m.fps)) }
+        return wanted?.takeIf(ok) ?: "h264".takeIf(ok) ?: encoderCodecs.firstOrNull(ok) ?: "h264"
+    }
+
+    private fun openCamera() {
+        val cam = s.cam ?: return
+        val m = Mode.parse(s.mode) ?: return
+        camera.closeAndWait()
+        venc?.stop()
+        venc = null
+        val enc = try {
+            VideoEncoder(s.codec, m.w, m.h, m.fps) { pts, flags, data -> link?.sendVideo(pts, flags, data) }
+        } catch (e: Exception) {
+            Log.e(TAG, "encoder", e)
+            set { it.copy(notice = "This phone's encoder refused ${m.label}. Pick another quality.") }
+            return
+        }
+        venc = enc
+        sendVideoConfig()
+        val size = camera.previewSize(cam, m.w, m.h, minOf(m.w * m.h, 1920 * 1080))
+        preview?.setDefaultBufferSize(size.width, size.height)
+        set { it.copy(previewW = size.width, previewH = size.height) }
+        camera.open(cam, Purpose.LIVE, Outputs(preview = previewSurface, encoder = enc.surface), m.fps, s.zoom)
+        if (s.torch) camera.setTorch(true)
+    }
+
+    private fun startAudio() {
+        if (aenc != null) return
+        val cam = s.cam ?: return
+        aenc = runCatching { AudioEncoder(cam.realtimeClock) { pts, flags, data -> link?.sendAudio(pts, flags, data) } }
+            .onFailure { set { s -> s.copy(notice = "The microphone is busy in another app.") } }
+            .getOrNull()
+        if (aenc != null) link?.sendAudioConfig()
+    }
+
+    private fun stopAudio() {
+        aenc?.stop()
+        aenc = null
+    }
+
+    private fun stopLive(sayBye: Boolean) {
+        h.removeCallbacks(tick)
+        h.removeCallbacks(reconnect)
+        live = false
+        orientation.stop()
+        link?.close(sayBye)
+        link = null
+        camera.closeAndWait()
+        venc?.stop(); venc = null
+        stopAudio()
+        LiveService.stop(app)
+        set { it.copy(torch = false, black = false, reconnecting = false) }
+    }
+
+    /** The Stop button: everything is released and the notification goes (must-never list). */
+    fun stop() = post {
+        attempt++
+        prefs.wasLive = false
+        stopLive(sayBye = true)
+        startScan()
+    }
+
+    /** Cancel on the connecting and waiting screens. */
+    fun cancel() = post {
+        attempt++
+        prefs.wasLive = false
+        if (live) stopLive(sayBye = true)
+        h.removeCallbacks(reconnect)
+        set { it.copy(problem = null) }
+        startScan()
+    }
+
+    // ---- requests: the PC's and the phone's go through here ------------------------------
+
+    fun apply(c: Cmd, fromPc: Boolean = false) = post { applyNow(c, fromPc) }
+
+    private fun applyNow(c: Cmd, fromPc: Boolean) {
+        if (!live) {
+            // On the scan screen only zoom and torch mean anything.
+            c.zoom?.let { z -> s.cam?.let { cam -> val v = z.coerceIn(cam.zoomMin, cam.zoomMax); camera.setZoom(v, glide = false); set { it.copy(zoom = v) } } }
+            c.torch?.let { t -> camera.setTorch(t); set { it.copy(torch = t && it.cam?.flash == true) } }
+            return
+        }
+        var restart = false
+        zooms.putAll(c.zooms)
+        var cam = s.cam ?: return
+        c.cam?.let { id ->
+            val next = s.cams.firstOrNull { it.id == id }
+            if (next != null && next.id != cam.id) {
+                zooms[cam.id] = s.zoom
+                cam = next
+                restart = true
+            }
+        }
+        var mode = s.mode
+        var codec = s.codec
+        if (restart && mode !in cam.modes.map { it.toString() }) mode = pickMode(cam, null)
+        c.mode?.let { if (it in cam.modes.map { m -> m.toString() } && it != mode) { mode = it; restart = true } }
+        c.codec?.let { if (it != codec && pickCodec(it, mode) == it) { codec = it; restart = true } }
+        if (restart && codec != pickCodec(codec, mode)) codec = pickCodec(codec, mode)
+
+        var zoom = s.zoom
+        if (restart && c.cam != null) zoom = (zooms[cam.id] ?: 1.0)
+        c.zoom?.let { zoom = it }
+        zoom = zoom.coerceIn(cam.zoomMin, cam.zoomMax)
+        zooms[cam.id] = zoom
+
+        val torch = (c.torch ?: s.torch) && cam.flash
+        val lock = c.lock ?: s.lock
+        val rot = if (lock) s.rot else Upright.streamRotation(cam, orientation.degrees)
+        set {
+            it.copy(cam = cam, mode = mode, codec = codec, zoom = zoom, torch = torch, rot = rot, lock = lock,
+                mirror = c.mirror ?: it.mirror, flip = c.flip ?: it.flip, mic = c.mic ?: it.mic)
+        }
+        if (restart) {
+            openCamera()
+            sendCaps()
+        } else {
+            if (c.zoom != null) camera.setZoom(zoom, glide = fromPc)
+            if (c.torch != null) camera.setTorch(torch)
+        }
+        c.mic?.let { if (it && s.micAllowed) startAudio() else if (!it) stopAudio() }
+        if (c.keyframe) venc?.requestKeyFrame()
+        sendState(force = true)
+    }
+
+    /** A pinch on the phone: the camera follows the fingers with no glide. */
+    fun pinch(factor: Float) = post {
+        val cam = s.cam ?: return@post
+        val z = (camera.zoom * factor).coerceIn(cam.zoomMin, cam.zoomMax)
+        if (live) applyNow(Cmd(zoom = z), fromPc = false) else { camera.setZoom(z, glide = false); set { it.copy(zoom = z) } }
+    }
+
+    /** A tap on the picture, already mapped to the sensor's own frame (0..1) by the view. */
+    fun focusSensor(sx: Float, sy: Float) = post { camera.focusAt(sx, sy) }
+
+    fun setBlack(on: Boolean) = set { it.copy(black = on && live) }
+    fun clearNotice() = set { it.copy(notice = null) }
+    fun setUpdate(r: Release?) = set { it.copy(update = r) }
+
+    // ---- preview surface ------------------------------------------------------------------
+
+    fun attachPreview(st: SurfaceTexture) {
+        val done = CountDownLatch(1)
+        post {
+            preview = st
+            previewSurface = Surface(st)
+            set { it.copy() }
+            st.setDefaultBufferSize(s.previewW, s.previewH)
+            if (live) {
+                camera.setOutputs(Outputs(preview = previewSurface, encoder = venc?.surface))
+            } else if (s.screen == Screen.SCAN) {
+                startScan()
+            }
+            done.countDown()
+        }
+        done.await(1500, TimeUnit.MILLISECONDS)
+    }
+
+    /** Called before the view's surface goes away; waits until the camera no longer draws into it. */
+    fun detachPreview() {
+        val done = CountDownLatch(1)
+        post {
+            val old = previewSurface
+            preview = null
+            previewSurface = null
+            if (live) camera.setOutputs(Outputs(encoder = venc?.surface))
+            else if (camera.info != null) camera.setOutputs(Outputs(reader = reader?.surface))
+            old?.release()
+            done.countDown()
+        }
+        done.await(1500, TimeUnit.MILLISECONDS)
+    }
+
+    // ---- camera and link events -----------------------------------------------------------
+
+    override fun onZoom(zoom: Double) {
+        set { it.copy(zoom = zoom) }
+        if (live) post { sendState(force = false) }
+    }
+
+    override fun onError(info: CameraInfo, message: String) = post {
+        Log.w(TAG, "camera ${info.id}: $message")
+        if (!info.listed) {
+            // An unlisted camera that answered but won't stream: drop it and use the next one (D-04).
+            val rest = s.cams.filter { it.id != info.id }
+            set { it.copy(cams = rest, notice = "${info.label} isn't usable on this phone; switched.") }
+            if (live && rest.isNotEmpty()) { applyNow(Cmd(cam = (rest.firstOrNull { !it.front } ?: rest.first()).id), false); sendCaps() }
+            else if (!live) startScan()
+            return@post
+        }
+        set { it.copy(notice = message) }
+    }
+
+    private fun needKeyFrame() { venc?.requestKeyFrame() }
+
+    override fun onCmd(c: Cmd) = apply(c, fromPc = true)
+
+    override fun onClosed(reason: String, byPeer: Boolean) = post {
+        if (!live) return@post
+        link = null
+        if (byPeer) {
+            // OBS closed or removed the source: release the camera now, and wait for it to come back.
+            stopLive(sayBye = false)
+            set { it.copy(screen = Screen.WAITING, problem = Problem(null, reason, pairing, true)) }
+            h.postDelayed(reconnect, 3000)
+        } else {
+            droppedAt = System.currentTimeMillis()
+            set { it.copy(reconnecting = true) }
+            h.postDelayed(reconnect, 1000)
+        }
+    }
+
+    /** Auto-reconnect: every few seconds, the same PC, at its last address or a fresh one. */
+    private val reconnect = object : Runnable {
+        override fun run() {
+            val p = pairing ?: return
+            val waiting = s.screen == Screen.WAITING
+            if (!live && !waiting) return
+            if (live && System.currentTimeMillis() - droppedAt > GIVE_UP_CAMERA_MS) {
+                // A long outage: stop heating the phone; keep trying without the camera.
+                stopLive(sayBye = false)
+                set { it.copy(screen = Screen.WAITING, problem = Problem(null, "Lost the PC. Trying again every few seconds.", p, Finder.sharesSubnet(p.hosts))) }
+            }
+            val myAttempt = attempt
+            Thread {
+                var r = runCatching { Link.connect(p, hello(), this@Engine, ::needKeyFrame) }
+                if (r.isFailure) Finder.byId(p)?.takeIf { it.hosts != p.hosts }?.let { f ->
+                    r = runCatching { Link.connect(f, hello(), this@Engine, ::needKeyFrame) }
+                    if (r.isSuccess) pairing = f
+                }
+                post {
+                    if (myAttempt != attempt) { r.getOrNull()?.close(); return@post }
+                    val l = r.getOrNull()
+                    if (l != null) {
+                        if (!live) { prefs.wasLive = true }
+                        onConnected(l)
+                    } else {
+                        val e = r.exceptionOrNull() as? ReachException
+                        if (e?.reach == Reach.AUTH) { stopLive(false); fail(p, e); return@post }
+                        h.postDelayed(this, if (live) 2000 else 3000)
+                    }
+                }
+            }.start()
+        }
+    }
+
+    private fun onDeviceTurned() {
+        if (!live || s.lock) return
+        val cam = s.cam ?: return
+        val rot = Upright.streamRotation(cam, orientation.degrees)
+        if (rot != s.rot) { set { it.copy(rot = rot) }; sendState(force = true) }
+    }
+
+    // ---- outgoing -------------------------------------------------------------------------
+
+    private fun caps(): Caps = Caps(
+        device = prefs.deviceName,
+        cams = s.cams.map {
+            CamCaps(it.id, it.facingName, it.label, it.zoomMin, it.zoomMax, it.lenses, it.flash, it.modes.map { m -> m.toString() })
+        },
+        codecs = encoderCodecs,
+        mic = s.micAllowed,
+    )
+
+    private fun sendCaps() { link?.sendCaps(caps()) }
+
+    private fun sendVideoConfig() {
+        val m = Mode.parse(s.mode) ?: return
+        link?.sendVideoConfig(s.codec, m.w, m.h, m.fps)
+    }
+
+    private fun sendState(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastStateAt < 33) {
+            h.removeCallbacks(trailingState)
+            h.postDelayed(trailingState, 40)
+            return
+        }
+        lastStateAt = now
+        val u = s
+        link?.sendState(
+            CamState(
+                cam = u.cam?.id.orEmpty(), zoom = u.zoom, torch = u.torch, mic = u.mic && aenc != null,
+                mode = u.mode, codec = u.codec, rot = u.rot, mirror = u.mirror, flip = u.flip,
+                lock = u.lock, temp = u.temp, battery = u.battery, live = live && link != null,
+            )
+        )
+    }
+
+    private val trailingState = Runnable { sendState(force = true) }
+
+    /** Once a second while live: battery, temperature and throughput for both screens. */
+    private val tick = object : Runnable {
+        override fun run() {
+            if (!live) return
+            val b = runCatching { app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
+            val temp = (b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
+            val level = b?.let {
+                val l = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val sc = it.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                if (l >= 0 && sc > 0) l * 100 / sc else -1
+            } ?: -1
+            val l = link
+            val bytes = l?.sentBytes ?: 0L
+            val kbps = if (bytes >= lastBytes) ((bytes - lastBytes) * 8 / 1000).toInt() else 0
+            lastBytes = bytes
+            val changed = temp != s.temp || level != s.battery
+            set { it.copy(temp = temp, battery = level, kbps = kbps, rttMs = l?.rttMs ?: 0) }
+            if (changed) sendState(force = true)
+            h.postDelayed(this, 1000)
+        }
+    }
+
+    fun micGranted() = ContextCompat.checkSelfPermission(app, android.Manifest.permission.RECORD_AUDIO) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+}

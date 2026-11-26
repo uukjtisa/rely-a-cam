@@ -1,0 +1,44 @@
+# Builds both halves and runs both sides of the protocol vectors on every push and pull request.
+# Releases are made locally with scripts/release.ps1 (the signing key never leaves the owner's PC).
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test the protocol and build the app
+        working-directory: android
+        run: ./gradlew :core:protocol:test :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RelyACam-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+
+  obs-plugin:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (downloads OBS sources and obs-deps)
+        working-directory: obs-plugin
+        run: cmake --preset windows-x64
+      - name: Build
+        working-directory: obs-plugin
+        run: cmake --build build_x64 --config RelWithDebInfo --parallel
+      - name: Protocol vectors
+        working-directory: obs-plugin
+        run: .\build_x64\RelWithDebInfo\rac-protocol-test.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rely-a-cam-plugin
+          path: obs-plugin/build_x64/RelWithDebInfo/rely-a-cam.dll

@@ -1,0 +1,68 @@
+# Rely-A-Cam
+
+Use your Android phone as a camera in OBS Studio, for free. Zoom stays in sync on both screens:
+pinch on the phone or scroll in OBS, and the phone's camera follows.
+
+- **Free, and it stays free.** No account, no cloud, no ads, no tracking, no watermark and no
+  paywall. The phone talks to your PC directly.
+- **Synced zoom.** You can zoom from the phone or from OBS, using the mouse wheel, a touchpad
+  pinch, the slider, presets or hotkeys. Presets come from your phone's own lenses, including
+  ultrawide lenses that other apps can't see.
+- **Pair by QR.** Scan the code in OBS's Phone Camera dock. Reconnects on its own after that.
+- **Wi-Fi, phone hotspot or USB.**
+- **Up to 4K**, if the phone can encode it. Only modes the phone really supports are offered.
+- Front and back cameras, torch, the phone's mic as an OBS audio source, mirror, flip, and
+  orientation that follows the phone (or stays locked).
+- **Several phones at once**, each as its own OBS source.
+
+![The Phone Camera dock in OBS, next to the phone app](docs/img/mock-live.png)
+
+*Pictures in this README come from the design mockup (`docs/mock.html`).*
+
+## Get it
+
+Everything is on the [latest release](https://github.com/uukjtisa/rely-a-cam/releases/latest):
+
+| On | Download | Then |
+|---|---|---|
+| Windows PC with OBS 31+ | `RelyACam-Setup-<version>.exe` | Run it. Open OBS; the **Phone Camera** dock shows a QR. |
+| Android phone (8.0+) | `RelyACam-<version>.apk` | Install it, open it, scan the QR. |
+
+Only grabbed one of the two? Each half gets you the other in one step:
+
+- **From OBS:** in the dock, click **+ Add phone**, then **No app on the phone?** Scan that QR
+  with the phone's normal camera to download the app straight from your PC (no internet needed).
+  Or plug the phone in by USB and click **Install app over USB**.
+- **From the phone:** tap **Get PC plugin** for the link, then share it or copy it.
+
+[SETUP.md](SETUP.md) walks through it with pictures, and covers what to do when a phone can't
+connect.
+
+## How it works
+
+The phone encodes H.264 or HEVC (and AAC for the mic) with its hardware encoder and sends it
+over one TCP connection to the plugin, which decodes it with the FFmpeg that OBS already ships.
+The phone owns the camera and its zoom: OBS sends requests, and both screens show the value
+the phone reports. The full wire format is in [protocol/PROTOCOL.md](protocol/PROTOCOL.md), and
+the reasons behind each design choice are in [DECISIONS.md](DECISIONS.md).
+
+## Build it yourself
+
+| Half | Needs | Command |
+|---|---|---|
+| Phone app | Android SDK, JDK 17+ | `cd android && ./gradlew :app:assembleDebug` |
+| OBS plugin | Visual Studio 2022, CMake 3.28+ | `cd obs-plugin && cmake --preset windows-x64 && cmake --build build_x64 --config RelWithDebInfo` |
+| Installer + APK | the above, and Inno Setup | `scripts/package.ps1` |
+
+The first CMake configure downloads the OBS sources, obs-deps and Qt that the plugin builds
+against.
+
+## Licences
+
+- The OBS plugin (`obs-plugin/`) is **GPL-2.0-or-later**, as it links against libobs.
+- The phone app (`android/`) is **GPL-3.0**.
+- The QR encoder in the plugin is Project Nayuki's qrcodegen (MIT).
+- The phone's QR reader uses ZXing (Apache-2.0).
+- The installer ships Google's `adb` (Apache-2.0) for USB setup.
+
+By Niccc2007.

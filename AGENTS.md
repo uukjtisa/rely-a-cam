@@ -94,6 +94,9 @@ DECISIONS.md         every consequential call, why, and what it costs
   chore), at most 72 characters. The body leads with why, then bullets, then what was verified.
 - Author: `Niccc2007 <94959895+uukjtisa@users.noreply.github.com>`. No agent trailers.
 - Licences: the plugin is GPL-2.0-or-later (it links libobs); the phone app is GPL-3.0.
+- A shell script added from Windows has no executable bit, so Linux CI fails with "Permission
+  denied" (this happened to `android/gradlew`). Run `git update-index --chmod=+x <file>` before
+  committing it.
 
 ## Docs
 

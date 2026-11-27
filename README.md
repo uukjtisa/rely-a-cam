@@ -1,5 +1,8 @@
 # Rely-A-Cam
 
+**A free OBS webcam plugin, Windows only for now.** A standalone app that works without OBS is
+coming in 0.2.0. The gesture module is experimental and entirely optional.
+
 Use your Android phone as a camera in OBS Studio, for free. Zoom stays in sync on both screens:
 pinch on the phone or scroll in OBS, and the phone's camera follows.
 
@@ -34,6 +37,7 @@ Everything is on the [latest release](https://github.com/uukjtisa/rely-a-cam/rel
 |---|---|---|
 | Windows PC with OBS 31+ | `RelyACam-Setup-<version>.exe` | Run it. Open OBS; the **Phone Camera** dock shows a QR. |
 | Android phone (8.0+) | `RelyACam-<version>.apk` | Install it, open it, scan the QR. |
+| Optional, experimental | `RelyACamGestures-Setup-<version>.exe` | Hand and face gestures and memes for your phone cameras (about 150 MB). Rely-A-Cam works fully without it. |
 
 Only grabbed one of the two? Each half gets you the other in one step:
 

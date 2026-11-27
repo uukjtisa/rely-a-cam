@@ -227,12 +227,79 @@ body.badges [data-badge^="NEW"]::after{background:#cf6a2c}
 .caption b{color:#fff}
 .legend{display:inline-flex;gap:6px;margin-left:6px}
 .legend span{font:700 9px/1 "Segoe UI";padding:2px 4px;border-radius:6px;color:#fff}
+
+/* ---------- round 5: phone live screen ---------- */
+.pline{position:absolute;left:12px;top:10px;background:#000a;border-radius:14px;padding:3px 10px;font-size:11px;display:flex;gap:6px;align-items:center;white-space:nowrap;cursor:pointer;z-index:2}
+.port .pline{right:12px;white-space:normal;flex-wrap:wrap;row-gap:0}
+.pline.hot{color:var(--yellow2)}
+.pline .hotmsg{font-weight:700}
+.prail{position:absolute;right:10px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;gap:10px;z-index:2}
+.pbar{position:absolute;left:0;right:0;bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px;z-index:2}
+.port .pbar .rbtn{width:34px;height:34px}
+.port .pbar .rbtn svg{width:17px;height:17px}
+.stopbtn{background:var(--red3);border:0;border-radius:16px;color:#fff;font-weight:600;font-size:12px;padding:7px 13px;cursor:pointer}
+.stopbtn.ls{position:absolute;left:12px;bottom:12px;z-index:2}
+.zoom5{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;z-index:2}
+.land .zoom5{left:84px;right:62px;bottom:6px}
+.port .zoom5{left:8px;right:8px;bottom:52px}
+.sruler{position:relative;height:30px;align-self:stretch;margin:0 14px;cursor:pointer;touch-action:none;user-select:none}
+.sruler .trk{position:absolute;left:0;right:0;top:8px;height:2px;border-radius:1px;background:#ffffff70}
+.sruler .tk{position:absolute;top:6px;width:1px;height:6px;background:#ffffffa0;pointer-events:none}
+.sruler .tk.big{top:3px;height:12px;width:2px;margin-left:-1px;background:#fff}
+.sruler .tk b{position:absolute;top:14px;left:50%;transform:translateX(-50%);font:600 10px/1 Roboto,"Segoe UI",sans-serif;color:#fff;text-shadow:0 1px 2px #000;padding:2px 3px;white-space:nowrap;cursor:pointer;pointer-events:auto}
+.sruler .hd{position:absolute;top:2px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #000c;pointer-events:none}
+.sruler.dk{margin:0 12px}
+.sruler.dk .trk,.sruler.dk .tk{background:var(--grey1)}
+.sruler.dk .tk.big{background:var(--text-light)}
+.sruler.dk .tk b{color:var(--text-light);text-shadow:none;font-family:"Segoe UI",sans-serif}
+.gridov{position:absolute;inset:0;pointer-events:none;z-index:1}
+.gridov i{position:absolute;top:0;bottom:0;width:1px;background:#ffffff8c;box-shadow:0 0 1px #0009}
+.gridov i.h{left:0;right:0;bottom:auto;width:auto;height:1px}
+.levelov{position:absolute;left:32%;right:32%;top:50%;height:2px;background:var(--yellow2);color:var(--yellow2);pointer-events:none;z-index:1}
+.levelov.ok{background:#4cd964;color:#4cd964}
+.levelov b{position:absolute;left:calc(100% + 6px);top:-7px;font:600 10px/1 Roboto,sans-serif;text-shadow:0 1px 2px #000}
+.lockbadge{position:absolute;left:50%;top:38px;transform:translateX(-50%);background:var(--yellow2);color:#000;font:700 10px/1 Roboto,sans-serif;padding:3px 8px;border-radius:10px;z-index:3}
+.fring{position:absolute;width:52px;height:52px;margin:-26px 0 0 -26px;border:2px solid #fff;border-radius:50%;pointer-events:none;z-index:3}
+.fring.lk{border-color:var(--yellow2)}
+.evs{position:absolute;margin:-44px 0 0 34px;z-index:3;display:flex;flex-direction:column;align-items:center;gap:1px;color:#fff}
+.evs input{writing-mode:vertical-lr;direction:rtl;height:70px;width:18px;accent-color:#fff;margin:0}
+.evs span{font-size:12px;text-shadow:0 1px 2px #000}
+.psheet .chipset{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.psheet .chipset .lab{color:#9aa0aa;min-width:86px}
+.psheet .info{color:#8a8f99;font-size:11px}
+/* ---------- round 5: dock ---------- */
+.dline{color:var(--muted);font-size:12px;display:flex;gap:5px;flex-wrap:wrap}
+.dtools{display:flex;align-items:center;gap:6px}
+.ibtn{flex:none;width:28px;height:26px;display:grid;place-items:center;background:var(--grey4);border:1px solid var(--grey4);border-radius:var(--radius);cursor:pointer;color:var(--text);padding:0}
+.ibtn:hover{background:var(--grey3);border-color:var(--grey1)}
+.ibtn.on{background:var(--blue3);border-color:var(--blue2)}
+.ibtn.warn{background:#5a2030;border-color:var(--red3)}
+.ibtn svg{width:15px;height:15px}
+.dnote{font-size:12px;color:#5fd06c;min-height:16px}
+.qmenu{position:fixed;z-index:100;min-width:200px;background:var(--grey6);border:1px solid var(--grey3);border-radius:4px;box-shadow:0 8px 24px #000c;padding:4px 0;font-size:12px}
+.qmenu .mi{display:grid;grid-template-columns:18px 1fr 14px;align-items:center;padding:4px 10px 4px 6px;white-space:nowrap;color:var(--text);cursor:default}
+.qmenu .mi:hover,.qmenu .mi.open{background:var(--blue3)}
+.qmenu .mi .ck{color:var(--blue1);text-align:center}
+.qmenu .mi:hover .ck,.qmenu .mi.open .ck{color:#fff}
+.qmenu .mi .ar{color:var(--muted);text-align:right}
+.qmenu .sep{height:1px;background:var(--grey4);margin:4px 0}
+.qdlg{position:fixed;inset:0;z-index:120;background:#0009;display:grid;place-items:center}
+.qdlg .box{width:460px;background:var(--grey6);border:1px solid #000;border-radius:6px;box-shadow:0 16px 40px #000c;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.qdlg h3{margin:0;font-size:14px}
+.qdlg p{margin:0;color:var(--text-light)}
+.qdlg .steps{display:flex;flex-direction:column;gap:4px;font-size:12px;background:var(--grey7);border-radius:4px;padding:8px 10px}
+.qdlg .steps div{color:var(--muted)}
+.qdlg .steps div.now{color:#fff}
+.qdlg .steps div.now::after{content:"  ...";color:var(--blue1)}
+.qdlg .steps div.ok{color:#5fd06c}
+.qdlg .steps div.ok::before{content:"\2713  "}
+.qdlg .row{display:flex;justify-content:flex-end;gap:6px;margin-top:4px}
 </style>
 </head>
 <body>
 
 <header class="topbar">
-  <h1>Phone camera for OBS<small>mock, round 4</small></h1>
+  <h1>Phone camera for OBS<small>mock, round 5</small></h1>
   <label>Phone 1
     <select id="prof1">
       <option value="nova">nova 10 (yours, measured)</option>
@@ -248,6 +315,8 @@ body.badges [data-badge^="NEW"]::after{background:#cf6a2c}
   <label><input type="checkbox" id="predict" checked> PC prediction</label>
   <label><input type="checkbox" id="glide" checked> Smooth glide</label>
   <label><input type="checkbox" id="badges"> Phase badges</label>
+  <label title="Pretend VB-Audio Virtual Cable is already installed"><input type="checkbox" id="cable"> VB-Cable installed</label>
+  <label title="Phase B: shows the Gestures and Detection items"><input type="checkbox" id="gmod"> Rely-A-Cam-Gestures installed</label>
   <span class="spacer"></span>
   <span class="seg" id="layoutSeg" title="All three are the same dock: the preview button and snapping in and out">
     <button data-l="A" class="on">A: docked + preview</button>
@@ -303,7 +372,18 @@ body.badges [data-badge^="NEW"]::after{background:#cf6a2c}
 </main>
 
 <section class="caption">
-  <h2>Round 4, 2026-11-27 (newest)</h2>
+  <h2>Round 5, 2026-11-27 (newest)</h2>
+  <ul style="margin-bottom:12px">
+    <li><b>The phone's live screen fits now.</b> Five icon buttons: Camera, Mic, Torch, Setup, Dark. Landscape puts them on the right; portrait puts them in one row at the bottom, next to Stop ("(mock) turn the phone" under the phone). Hover a button to see its name; on the phone you press and hold. Mirror, Flip and Lock turn moved into Setup &gt; Picture.</li>
+    <li><b>One status line.</b> "&#9679; Live &#183; Wi-Fi &#183; 1080p30 &#183; 41&#176;C". Pick 4K in Setup and it reads 49&#176;C, goes yellow and says "hot: try 1080p" (the warning starts at 45&#176;C). Codec, bitrate and battery moved into Setup &gt; Video.</li>
+    <li><b>Slim zoom ruler</b> on both sides: a thin line, a tick at each whole zoom, a label at each preset and at the top end, and a small white handle. Drag anywhere on it or click a label. The dock's preset buttons are gone; the ruler's labels do that job.</li>
+    <li><b>Tools.</b> Click the phone's picture to focus: a ring and a &#9728; brightness slider appear beside it for 3 s. Press and hold for AE/AF LOCK (the ring turns yellow). White balance and Snapshot to PC are in Setup &gt; Picture; in the dock they're in &#8943; &gt; Picture, with Snapshot also a button.</li>
+    <li><b>Overlays.</b> Grid (thirds) has its own on/off for the dock, the phone and the OBS output (Setup &gt; Overlays, or &#8943; &gt; Overlays &gt; Grid). Level line is phone-only. Detection appears beside Grid once Rely-A-Cam-Gestures is installed (tick it in the top bar).</li>
+    <li><b>The dock is lean.</b> Chips, one status line, the preview, the ruler, and a row of icons: Mic (with its meter), Torch, Snapshot, &#8943;. Everything else lives in the &#8943; menu, which is also what you get on right-click of the preview. Options hide while what they depend on is off: mute the mic and Input, Clean-up, Every scene and Use in other apps disappear from &#8943; &gt; Mic.</li>
+    <li><b>One-click VB-Cable.</b> &#8943; &gt; Mic &gt; Use in other apps... asks first, then runs the steps (download, signature check, install with Windows' own two prompts, defaults put back) and turns it on. With the cable installed (tick it in the top bar), the menu shows Use in other apps, "...and be Windows' default mic" (only while it's on), and Remove VB-Cable...</li>
+    <li>Android's status bar is hidden while live (it was never drawn in this mock; the real app hides it).</li>
+  </ul>
+  <h2>Round 4, 2026-11-27</h2>
   <ul style="margin-bottom:12px">
     <li><b>Each phone's mic is its own OBS source, separate from its camera.</b> In the Audio Mixer it's "Phone Mic - nova 10". With <b>Every scene</b> on (in the dock), it's heard in every scene, like OBS's own Mic/Aux, so switching to the other phone's camera never cuts your main mic. Turn it off and the mic becomes a normal source in this scene (see Sources).</li>
     <li><b>The first phone you pair is the main mic:</b> its mic is on and set to Every scene. Phones paired after it start with their mic off. Try it with "+ Add phone", then "Simulate a phone scanning".</li>
@@ -395,7 +475,8 @@ const CLEAN = { ns: "Noise", aec: "Echo", agc: "Auto gain" };
 function mkPhone(key, first = phones.length === 0) {
   const prof = PROFILES[key];
   const p = { key, prof, cams: prof.cams.filter(c => !c.pending), cam: 0, mem: {}, target: 1, cur: 1, real: 1, shown: 1,
-              torch: false, mic: first, global: first, apps: false, micIn: prof.mics[0].id, clean: {}, micOnly: false, sheet: false, mirror: false, vflip: false, lock: false, upright: "land", level: 0, hist: [], pred: null, predAt: -1e9, lastReq: null, lastReqAt: -1e9, quality: "" };
+              torch: false, mic: first, global: first, apps: false, micIn: prof.mics[0].id, clean: {}, micOnly: false, sheet: false, mirror: false, vflip: false, lock: false, upright: "land", level: 0, hist: [], pred: null, predAt: -1e9, lastReq: null, lastReqAt: -1e9, quality: "",
+              grid: { dock: false, phone: false, out: false }, det: { dock: true, phone: true, out: true }, levelLine: false, tilt: 0, wb: "auto", aeLock: false, ev: 0, focus: null, focusAt: 0, defMic: true, gest: false, snaps: 0 };
   resetCam(p);
   return p;
 }
@@ -493,11 +574,165 @@ const IC = {
   vflip: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 9L17 3v6z"/><path d="M7 15l10 6v-6z"/></svg>`,
   lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`,
   wifioff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M3 3l18 18"/></svg>`,
+  gear: `<svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M10.3 2h3.4l.5 2.6a7.9 7.9 0 0 1 1.9 1.1l2.5-.9 1.7 2.9-2 1.7a8 8 0 0 1 0 2.2l2 1.7-1.7 2.9-2.5-.9a7.9 7.9 0 0 1-1.9 1.1l-.5 2.6h-3.4l-.5-2.6a7.9 7.9 0 0 1-1.9-1.1l-2.5.9-1.7-2.9 2-1.7a8 8 0 0 1 0-2.2l-2-1.7 1.7-2.9 2.5.9a7.9 7.9 0 0 1 1.9-1.1zM12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8z"/></svg>`,
+  shot: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>`,
+  dots: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>`,
 };
+const GRID = `<div class="gridov"><i style="left:33.33%"></i><i style="left:66.66%"></i><i class="h" style="top:33.33%"></i><i class="h" style="top:66.66%"></i></div>`;
+const fq = q => q.replace(" ", "");
+/* the phone reports its temperature; at 4K the nova sits around 49 C, which is what you measured */
+const tempOf = p => p.prof.temp + (p.quality.startsWith("4K") ? 8 : p.quality.startsWith("1440") ? 4 : 0);
+const WB = [["auto", "Auto"], ["lock", "Lock current"], ["day", "Daylight"], ["cloud", "Cloudy"], ["indoor", "Indoor"], ["fluor", "Fluorescent"]];
+const WBF = { auto: "", lock: "", day: "", cloud: " sepia(.18)", indoor: " sepia(.3) hue-rotate(-12deg)", fluor: " hue-rotate(14deg) saturate(.9)" };
+const filterOf = p => `brightness(${((p.torch ? 1.35 : 1) * Math.pow(1.25, p.ev)).toFixed(3)})${WBF[p.wb] || ""}`;
+const PLACES = [["dock", "Dock"], ["phone", "Phone"], ["out", "OBS output"]];
+let cableInstalled = false;
+const moduleInstalled = () => $("#gmod").checked;
+let dockMsg = { t: -1e9, s: "" };
+function snapshot(p) {
+  p.snaps++;
+  dockMsg = { t: performance.now(), s: `Snapshot saved: Pictures\\Rely-A-Cam\\${p.prof.name} ${p.snaps}.jpg (full sensor)` };
+  toast("Snapshot saved on the PC");
+}
+
+/* ---------------- slim zoom ruler (phone and dock share it) ---------------- */
+function rulerHTML(c, key, obs) {
+  const lab = [...new Set([...presetsFor(c), c.max])];
+  const minors = [];
+  for (let v = Math.ceil(c.min); v <= Math.floor(c.max); v++) if (!lab.some(l => Math.abs(l - v) < 1e-6)) minors.push(v);
+  const at = v => (toPos(c, v) / 10).toFixed(2) + "%";
+  return `<div class="sruler ${obs ? "dk" : ""}" data-r="${key}rul"><div class="trk"></div>
+    ${minors.map(v => `<i class="tk" style="left:${at(v)}"></i>`).join("")}
+    ${lab.map(v => `<i class="tk big" style="left:${at(v)}"><b data-tv="${v}">${fx(v)}</b></i>`).join("")}
+    <i class="hd" data-r="${key}hd"></i></div>`;
+}
+function rulerDrag(el, c, apply) {
+  if (!el) return;
+  let down = false;
+  const pos = e => { const r = el.getBoundingClientRect(); return Math.min(1000, Math.max(0, (e.clientX - r.left) / r.width * 1000)); };
+  el.addEventListener("pointerdown", e => {
+    e.stopPropagation();
+    const tv = e.target.closest("[data-tv]"); if (tv) { apply(+tv.dataset.tv); return; }
+    down = true; el.setPointerCapture(e.pointerId); apply(fromPos(c, pos(e)));
+  });
+  el.addEventListener("pointermove", e => { if (down) apply(fromPos(c, pos(e))); });
+  el.addEventListener("pointerup", () => { down = false; });
+  el.addEventListener("pointercancel", () => { down = false; });
+}
+
+/* ---------------- menus (the dock's ⋯ button and right-click share one list) ---------------- */
+const menus = [];
+function closeMenus(from = 0) { while (menus.length > from) menus.pop().remove(); }
+function openMenu(items, x, y, depth = 0) {
+  closeMenus(depth);
+  const m = document.createElement("div"); m.className = "qmenu";
+  for (const it of items) {
+    if (it.sep) { m.insertAdjacentHTML("beforeend", `<div class="sep"></div>`); continue; }
+    const row = document.createElement("div"); row.className = "mi";
+    row.innerHTML = `<span class="ck">${it.check ? "&#10003;" : ""}</span><span>${esc(it.label)}</span><span class="ar">${it.sub ? "&#9656;" : ""}</span>`;
+    row.addEventListener("mouseenter", () => {
+      m.querySelectorAll(".mi.open").forEach(o => o.classList.remove("open"));
+      if (it.sub) { row.classList.add("open"); const r = row.getBoundingClientRect(); openMenu(it.sub, r.right - 2, r.top - 5, depth + 1); }
+      else closeMenus(depth + 1);
+    });
+    row.addEventListener("click", e => { e.stopPropagation(); if (it.sub) return; closeMenus(); it.act?.(); renderAll(); });
+    m.appendChild(row);
+  }
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+  menus.push(m);
+}
+document.addEventListener("pointerdown", e => { if (!e.target.closest(".qmenu")) closeMenus(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeMenus(); closeDlg(); } });
+const places = o => PLACES.map(([k, l]) => ({ label: l, check: o[k], act: () => { o[k] = !o[k]; } }));
+function dockMenu(p) {
+  const c = camOf(p);
+  const mic = [{ label: "Mic on", check: p.mic, act: () => { p.mic = !p.mic; } }];
+  if (p.mic) mic.push(
+    { label: "Input", sub: p.prof.mics.map(m => ({ label: m.label, check: m.id === p.micIn, act: () => { p.micIn = m.id; } })) },
+    { label: "Clean-up", sub: p.prof.clean.map(k => ({ label: CLEAN[k], check: p.clean[k], act: () => { p.clean[k] = !p.clean[k]; } })) },
+    { label: "Every scene", check: p.global, act: () => { p.global = !p.global; } },
+    { sep: 1 },
+    ...(cableInstalled
+      ? [{ label: "Use in other apps", check: p.apps, act: () => { p.apps = !p.apps; } },
+         ...(p.apps ? [{ label: "...and be Windows' default mic", check: p.defMic, act: () => { p.defMic = !p.defMic; } }] : []),
+         { label: "Remove VB-Cable...", act: () => cableRemoveDlg() }]
+      : [{ label: "Use in other apps...", act: () => cableInstallDlg(p) }]),
+    { sep: 1 });
+  mic.push({ label: "Mic only (camera off)", check: p.micOnly, act: () => { p.micOnly = !p.micOnly; if (p.micOnly) p.mic = true; } });
+  const items = [
+    { label: "Camera", sub: p.cams.map((cc, i) => ({ label: `${cc.label}, ${fx(cc.min)}${cc.max > cc.min ? "-" + fx(cc.max) : ""}`, check: i === p.cam, act: () => setCam(p, i) })) },
+    { label: "Quality", sub: c.modes.map(m => ({ label: m + (m === "1080p 30" ? " (default)" : ""), check: m === p.quality, act: () => { p.quality = m; } })) },
+    { label: "Picture", sub: [
+      { label: "Mirror", check: p.mirror, act: () => { p.mirror = !p.mirror; } },
+      { label: "Flip", check: p.vflip, act: () => { p.vflip = !p.vflip; } },
+      { label: "Lock turn", check: p.lock, act: () => { p.lock = !p.lock; } },
+      { sep: 1 },
+      { label: "Lock focus + exposure", check: p.aeLock, act: () => { p.aeLock = !p.aeLock; p.focus = p.aeLock ? (p.focus || { x: 50, y: 50 }) : null; p.focusAt = performance.now(); } },
+      { label: "White balance", sub: WB.map(([k, l]) => ({ label: l, check: p.wb === k, act: () => { p.wb = k; } })) },
+      { sep: 1 },
+      { label: "Snapshot to PC", act: () => snapshot(p) } ] },
+    { label: "Mic", sub: mic },
+    { label: "Overlays", sub: [{ label: "Grid", sub: places(p.grid) }, ...(moduleInstalled() ? [{ label: "Detection", sub: places(p.det) }] : [])] },
+  ];
+  if (moduleInstalled()) items.push({ label: "Gestures", sub: [
+    { label: "On for this phone", check: p.gest, act: () => { p.gest = !p.gest; } },
+    ...(p.gest ? [{ label: "Open editor...", act: () => { dockMsg = { t: performance.now(), s: "Opens the Rely-A-Cam-Gestures window (its own mock)" }; } },
+                  { label: "Undo last gesture", act: () => {} }] : [])] });
+  if (phones.indexOf(p) > 0) items.push({ sep: 1 }, { label: "Disconnect " + p.prof.name, act: () => { phones.splice(phones.indexOf(p), 1); sel = 0; } });
+  return items;
+}
+
+/* ---------------- dialogs (VB-Cable install / removal) ---------------- */
+const closeDlg = () => $("#qdlg")?.remove();
+function dlg(html, buttons) {
+  closeDlg();
+  const d = document.createElement("div"); d.className = "qdlg"; d.id = "qdlg";
+  d.innerHTML = `<div class="box">${html}<div class="row">${buttons.map((b, i) => `<button class="btn ${b[2] ? "on" : ""}" data-b="${i}">${esc(b[0])}</button>`).join("")}</div></div>`;
+  d.addEventListener("click", e => {
+    if (e.target.closest("[data-close]")) { closeDlg(); return; }
+    const b = e.target.closest("[data-b]"); if (!b) return;
+    const fn = buttons[+b.dataset.b][1]; fn ? fn(d) : closeDlg();
+  });
+  document.body.appendChild(d);
+}
+function cableInstallDlg(p) {
+  dlg(`<h3>Use ${esc(p.prof.name)}'s mic in other apps?</h3>
+    <p>Chrome, Discord and Zoom can only use an OBS mic through a virtual cable. Rely-A-Cam sets it up:</p>
+    <div class="steps"><div>Download VB-Audio Virtual Cable from vb-audio.com (1.3 MB, donationware)</div>
+      <div>Check it's signed by VB-Audio</div>
+      <div>Install it: Windows asks for admin permission, then shows its own "Install this device software?" box</div>
+      <div>Put your speakers and mic back as Windows' defaults if the install moved them</div>
+      <div>Turn on Use in other apps</div></div>`,
+    [["Download and install", d => runCable(d, p), true], ["Cancel"]]);
+}
+function runCable(d, p) {
+  const steps = [...d.querySelectorAll(".steps div")];
+  d.querySelector(".row").innerHTML = `<span class="muted">Working (mock: about 4 s)</span>`;
+  let i = 0;
+  const tick = () => {
+    steps.forEach((s, k) => { s.className = k < i ? "ok" : k === i ? "now" : ""; });
+    if (i++ < steps.length) { setTimeout(tick, 800); return; }
+    cableInstalled = true; $("#cable").checked = true; p.apps = true; p.defMic = true;
+    d.querySelector(".box").innerHTML = `<h3>Done</h3>
+      <p>${esc(p.prof.name)}'s mic is now Windows' default mic while it's on, so apps left on "Default" use it. Apps with a mic list can pick <b>CABLE Output</b>.</p>
+      <p class="muted">Mute it on the phone or in OBS and Windows gets its old default mic back at once.</p>
+      <div class="row"><button class="btn on" data-close>OK</button></div>`;
+    renderAll();
+  };
+  tick();
+}
+function cableRemoveDlg() {
+  dlg(`<h3>Remove VB-Audio Virtual Cable?</h3>
+    <p>Apps using "CABLE Output" as their mic lose it, and Use in other apps turns off for every phone. Windows asks for admin permission; a restart may be needed to finish.</p>`,
+    [["Remove", () => { cableInstalled = false; $("#cable").checked = false; phones.forEach(q => { q.apps = false; }); closeDlg(); renderAll(); }, true], ["Cancel"]]);
+}
 const sceneFor = p => camOf(p).facing === "front" ? SCENE_FRONT : SCENE_BACK;
 const worldHTML = p => p.micOnly
   ? `<div class="world"></div><div class="camoff">Mic only<br>camera off</div>`
-  : `<div class="world ${p.torch ? "lit" : ""}">${sceneFor(p)}</div>`;
+  : `<div class="world">${sceneFor(p)}</div>`;
 
 /* ---------------- input helpers ---------------- */
 function wheelZoom(el, getBase, apply) {
@@ -539,25 +774,20 @@ function dockControlsHTML(kind) {
   return `
   <div class="chips">${phones.map((q, i) => `<span class="chip rel ${i === sel ? "on" : ""}" data-sel="${i}"><i class="led"></i>${esc(q.prof.name)}${i > 0 ? `<span class="close" data-rm="${i}" title="Disconnect">&#215;</span>` : ""}</span>`).join("")}
     <span class="chip add rel" data-add data-badge="P1">+ Add phone</span></div>
-  <div class="status"><span class="rel" data-badge="${linkBadge()}">${linkName()}</span><span>${p.quality}</span><span><b data-r="lat"></b> ms</span><span class="rel ${p.prof.warm ? "warm" : ""}" data-badge="NEW">${p.prof.temp} &#176;C${p.prof.warm ? " warm" : ""}</span></div>
+  <div class="dline"><span>${linkName()}</span>&#183;<span>${fq(p.quality)}</span>&#183;<span><b data-r="lat"></b> ms</span>&#183;<span class="${tempOf(p) >= 45 ? "warm" : ""}">${tempOf(p)} &#176;C${tempOf(p) >= 45 ? " hot: try 1080p" : ""}</span>${p.aeLock ? `&#183;<span class="warm">AE/AF locked</span>` : ""}</div>
   ${kind === "B"
-    ? `<div class="pad rel" data-r="pad" data-badge="NEW prediction"><b data-r="padv"></b><small>${zoomable ? "scroll, Ctrl+scroll or pinch here" : "this camera can't zoom"}</small></div>`
-    : `<div class="rel" data-badge="NEW prediction"><div class="vp dvp" data-r="dvp">${worldHTML(p)}<span class="zpill" data-r="dz"></span><span class="hint">${zoomable ? "scroll &#183; Ctrl+scroll &#183; pinch" : "can't zoom"}</span></div></div>`}
-  ${zoomable
-    ? `<div class="presets rel" data-badge="P1">${ps.map(v => `<button class="btn" data-preset="${v}">${fx(v)}</button>`).join("")}</div>
-       <div class="srow"><span>${fx(c.min)}</span><input type="range" min="0" max="1000" data-r="dsl"><span>${fx(c.max)}</span></div>`
-    : `<div class="nozoom-d">This camera can't zoom (${fx(c.min)} only). Zoom controls are off for it.</div>`}
-  <div class="ctl">
-    <span class="lbl">Camera</span><span class="rel" data-badge="P1"><select class="obsel" data-r="dcam">${camOptions(p)}</select></span>
-    <span class="lbl">Quality</span><span class="rel" data-badge="P1"><select class="obsel" data-r="dq">${c.modes.map(m => `<option ${m === p.quality ? "selected" : ""}>${m}${m === "1080p 30" ? " (default)" : ""}</option>`).join("")}</select></span>
-    ${c.flash ? `<span class="lbl">Torch</span><span><button class="btn rel ${p.torch ? "on" : ""}" data-r="dtorch" data-badge="P1">${p.torch ? "On" : "Off"}</button></span>` : ""}
-    <span class="lbl">Picture</span><span class="rel" data-badge="NEW" style="display:flex;gap:4px"><button class="btn ${p.mirror ? "on" : ""}" data-r="dmirror">Mirror</button><button class="btn ${p.vflip ? "on" : ""}" data-r="dvflip">Flip</button><button class="btn ${p.lock ? "on" : ""}" data-r="dlock" title="Stop following the phone's turning">${p.lock ? "Locked" : "Lock"}</button></span>
-    <span class="lbl">Mic</span><span class="microw rel" data-badge="NEW"><button class="btn ${p.mic ? "on" : "warn"}" data-r="dmic" title="Mute or unmute this phone's mic">${p.mic ? "On" : "Muted"}</button><span class="meter"><i data-r="dmeter"></i></span><span class="clip" data-r="dclip" title="Too loud: it's clipping">CLIP</span></span>
-    <span class="lbl">Input</span><span class="rel" data-badge="NEW"><select class="obsel" data-r="dmicin">${p.prof.mics.map(m => `<option value="${m.id}" ${m.id === p.micIn ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></span>
-    <span class="lbl">Clean-up</span><span class="chiprow rel" data-badge="NEW">${p.prof.clean.map(k => `<button class="btn ${p.clean[k] ? "on" : ""}" data-clean="${k}">${CLEAN[k]}</button>`).join("")}</span>
-    <span class="lbl">Route</span><span class="chiprow rel" data-badge="NEW"><button class="btn ${p.global ? "on" : ""}" data-r="dglobal" title="Heard in every scene, like OBS's own Mic/Aux. Switching cameras never cuts it.">Every scene</button><button class="btn ${p.micOnly ? "on" : ""}" data-r="dmiconly" title="Camera off: this phone streams only its mic">Mic only</button><button class="btn ${p.apps ? "on" : ""}" data-r="dapps" title="Use this mic in Chrome, Discord or Zoom, through the free VB-Audio Virtual Cable">Use in other apps</button></span>
+    ? `<div class="pad rel" data-r="pad" title="Right-click for the menu"><b data-r="padv"></b><small>${zoomable ? "scroll, Ctrl+scroll or pinch here" : "this camera can't zoom"}</small></div>`
+    : `<div class="vp dvp" data-r="dvp">${worldHTML(p)}${p.grid.dock && !p.micOnly ? GRID : ""}<span class="zpill" data-r="dz"></span><span class="hint">${zoomable ? "scroll &#183; pinch &#183; right-click: menu" : "right-click: menu"}</span></div>`}
+  ${p.micOnly ? "" : zoomable ? rulerHTML(c, "d", true)
+    : `<div class="nozoom-d">This camera can't zoom (${fx(c.min)} only).</div>`}
+  <div class="dtools">
+    <button class="ibtn ${p.mic ? "on" : "warn"}" data-r="dmic" title="${p.mic ? "Mic on: click to mute" : "Mic muted: click to turn on"}">${p.mic ? IC.mic : IC.micoff}</button>
+    ${p.mic ? `<span class="meter"><i data-r="dmeter"></i></span><span class="clip" data-r="dclip" title="Too loud: it's clipping">CLIP</span>` : `<span class="muted" style="flex:1">mic muted</span>`}
+    ${c.flash && !p.micOnly ? `<button class="ibtn ${p.torch ? "on" : ""}" data-r="dtorch" title="Torch">${IC.torch}</button>` : ""}
+    ${p.micOnly ? "" : `<button class="ibtn" data-r="dsnap" title="Snapshot: a full-sensor photo saved on this PC">${IC.shot}</button>`}
+    <button class="ibtn" data-r="dmore" title="Camera, quality, picture, mic, overlays">${IC.dots}</button>
   </div>
-  <div class="foot rel" data-badge="P2">${zoomable ? `Hotkeys: + / - zoom${ps.length > 1 ? `, 1-${ps.length} presets` : ""} (set in OBS Settings &gt; Hotkeys). Touchscreen pinch: built, untested.` : "Zoom hotkeys do nothing on this camera."}</div>`;
+  <div class="dnote" data-r="dnote"></div>`;
 }
 let qrShownAt = 0;
 function dockQrHTML() {
@@ -588,7 +818,7 @@ function buildDock() {
   document.querySelectorAll("[data-tpreview]").forEach(b => b.classList.toggle("on", showPreview));
   host.innerHTML = dockMode === "qr" ? dockQrHTML() : dockControlsHTML(showPreview ? "A" : "B");
   const r = n => host.querySelector(`[data-r="${n}"]`);
-  ["dz", "dsl", "padv", "lat", "dmeter", "dclip", "qrhelp"].forEach(k => R[k] = r(k));
+  ["dz", "dhd", "padv", "lat", "dmeter", "dclip", "qrhelp", "dnote"].forEach(k => R[k] = r(k));
   R.dockWorld = r("dvp")?.querySelector(".world") || null;
   R.dockPresets = [...host.querySelectorAll("[data-preset]")];
   if (dockMode === "qr") { drawQR(r("qr")); qrShownAt = performance.now(); return; }
@@ -596,19 +826,12 @@ function buildDock() {
   const target = r("dvp") || r("pad");
   wheelZoom(target, () => pcBase(p), v => pcRequest(p, v));
   pinchZoom(target, () => pcBase(p), v => pcRequest(p, v));
-  R.dsl?.addEventListener("input", e => pcRequest(p, fromPos(camOf(p), +e.target.value)));
-  r("dcam").addEventListener("change", e => setCam(p, +e.target.value));
-  r("dq").addEventListener("change", e => { p.quality = e.target.value.replace(" (default)", ""); renderAll(); });
+  target.addEventListener("contextmenu", e => { e.preventDefault(); openMenu(dockMenu(p), e.clientX, e.clientY); });
+  rulerDrag(r("drul"), camOf(p), v => pcRequest(p, v));
   r("dtorch")?.addEventListener("click", () => { p.torch = !p.torch; renderAll(); });
-  r("dmic").addEventListener("click", () => { p.mic = !p.mic; renderAll(); });
-  r("dmicin").addEventListener("change", e => { p.micIn = e.target.value; renderAll(); });
-  r("dglobal").addEventListener("click", () => { p.global = !p.global; renderAll(); });
-  r("dmiconly").addEventListener("click", () => { p.micOnly = !p.micOnly; renderAll(); });
-  r("dapps").addEventListener("click", () => { p.apps = !p.apps; renderAll(); });
-  host.querySelectorAll("[data-clean]").forEach(b => b.addEventListener("click", () => { p.clean[b.dataset.clean] = !p.clean[b.dataset.clean]; renderAll(); }));
-  r("dmirror").addEventListener("click", () => { p.mirror = !p.mirror; renderAll(); });
-  r("dvflip").addEventListener("click", () => { p.vflip = !p.vflip; renderAll(); });
-  r("dlock").addEventListener("click", () => { p.lock = !p.lock; renderAll(); });
+  r("dmic").addEventListener("click", () => { p.mic = !p.mic; if (!p.mic) p.micOnly = false; renderAll(); });
+  r("dsnap")?.addEventListener("click", () => snapshot(p));
+  r("dmore").addEventListener("click", e => { const rc = e.currentTarget.getBoundingClientRect(); openMenu(dockMenu(p), rc.left, rc.bottom + 2); });
 }
 function dockClick(e) {
   const t = e.target;
@@ -629,36 +852,52 @@ $("#popBody").addEventListener("click", dockClick);
 
 /* ---------------- phone ---------------- */
 function phoneLiveHTML(p) {
-  const c = camOf(p), ps = presetsFor(c), z = c.max > c.min;
-  return `<div class="vp cam" data-r="pvp">${worldHTML(p)}</div>
-  <div class="ppill tl"><i class="dot"></i>LIVE &#183; OBS on your PC &#183; <span class="rel" data-badge="${linkBadge()}">${linkName()}</span></div>
-  <div class="ppill tr2 tap ${p.prof.warm ? "warm" : ""}" data-badge="NEW" data-pa="setup" title="Mic and quality">${p.quality} &#183; ${p.prof.temp} &#176;C &#183; &#9881; Setup</div>
+  const c = camOf(p), z = c.max > c.min, t = tempOf(p), hot = t >= 45, port = p.upright === "port";
+  const rb = (pa, ic, name, on) => `<button class="rbtn ${on ? "on" : ""}" data-pa="${pa}" title="${name} (press and hold on the phone)">${ic}</button>`;
+  const btns = [
+    p.cams.length > 1 && !p.micOnly ? rb("flip", IC.flip, "Camera: front / back", false) : "",
+    rb("mic", p.mic ? IC.mic : IC.micoff, p.mic ? "Mic" : "Mic muted", !p.mic),
+    c.flash && !p.micOnly ? rb("torch", IC.torch, "Torch", p.torch) : "",
+    rb("setup", IC.gear, "Setup", false),
+    rb("saver", IC.moon, "Dark screen", false)].join("");
+  return `<div class="vp cam" data-r="pvp">${worldHTML(p)}${p.grid.phone && !p.micOnly ? GRID : ""}${p.levelLine && !p.micOnly ? `<div class="levelov" data-r="lvl"><b data-r="lvlt"></b></div>` : ""}</div>
+  ${p.aeLock && !p.micOnly ? `<div class="lockbadge">AE/AF LOCK</div>` : ""}
+  ${p.focus && !p.micOnly ? `<div class="fring ${p.aeLock ? "lk" : ""}" style="left:${p.focus.x}%;top:${p.focus.y}%"></div>
+     <div class="evs" style="left:${p.focus.x}%;top:${p.focus.y}%"><span>&#9728;</span><input type="range" min="-2" max="2" step="0.1" value="${p.ev}" data-r="pev" title="Brightness"></div>` : ""}
+  <div class="pline ${hot ? "hot" : ""}" data-pa="setup" title="Tap for Setup"><i class="dot"></i>Live &#183; ${linkName()} &#183; ${fq(p.quality)} &#183; ${t}&#176;C${hot ? ` &#183; <span class="hotmsg">hot: try 1080p</span>` : ""}</div>
   ${p.micOnly ? `<div class="miconly"><b style="font-size:14px">Mic only</b><span>camera off &#183; ${esc(p.prof.mics.find(m => m.id === p.micIn).label)}</span><span class="meter"><i data-r="pbig"></i></span><button class="pbtn" data-pa="miconly">Turn the camera back on</button></div>` : ""}
-  ${p.sheet ? `<div class="psheet">
+  ${port ? `<div class="pbar"><button class="stopbtn" data-pa="stop">Stop</button>${btns}</div>`
+         : `<div class="prail">${btns}</div><button class="stopbtn ls" data-pa="stop">Stop</button>`}
+  ${p.micOnly ? "" : `<div class="zoom5">${z ? `<span class="zval" data-r="pz"></span>${rulerHTML(c, "p", false)}` : `<span class="nozoom">${esc(c.label)}: this camera can't zoom</span>`}</div>`}
+  ${p.sheet ? setupSheetHTML(p) : ""}
+  <div class="toast" data-r="toast"></div>`;
+}
+function setupSheetHTML(p) {
+  const c = camOf(p), on = b => b ? "on" : "";
+  const placeChips = (o, attr) => PLACES.map(([k, l]) => `<button class="pchip ${on(o[k])}" data-${attr}="${k}">${l}</button>`).join("");
+  return `<div class="psheet">
     <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px">Setup</b><button class="pbtn" data-pa="sheetclose">Done</button></div>
     <h3>Mic</h3>
-    <div class="opt ${p.mic ? "on" : ""}" data-pa="mic"><span>${p.mic ? "Mic on" : "Mic muted"}</span><span class="meter" style="max-width:45%"><i data-r="pmeter"></i></span><span class="clip" data-r="pclip">CLIP</span></div>
-    ${p.prof.mics.map(m => `<div class="opt ${m.id === p.micIn ? "on" : ""}" data-micin="${m.id}"><span>${esc(m.label)}</span><span class="muted">${m.id === p.micIn ? "in use" : ""}</span></div>`).join("")}
-    <div class="muted">A wired, USB or Bluetooth mic shows up here as soon as it's plugged in or connected.</div>
-    <div class="chiprow">${p.prof.clean.map(k => `<button class="pchip ${p.clean[k] ? "on" : ""}" data-pclean="${k}">${CLEAN[k]}</button>`).join("")}</div>
-    <div class="opt ${p.micOnly ? "on" : ""}" data-pa="miconly"><span>Mic only (camera off)</span><span class="muted">${p.micOnly ? "on" : "off"}</span></div>
+    <div class="opt ${on(p.mic)}" data-pa="mic"><span>${p.mic ? "Mic on" : "Mic muted"}</span>${p.mic ? `<span class="meter" style="max-width:45%"><i data-r="pmeter"></i></span><span class="clip" data-r="pclip">CLIP</span>` : ""}</div>
+    ${p.mic ? `${p.prof.mics.map(m => `<div class="opt ${on(m.id === p.micIn)}" data-micin="${m.id}"><span>${esc(m.label)}</span><span class="muted">${m.id === p.micIn ? "in use" : ""}</span></div>`).join("")}
+      <div class="muted">A wired, USB or Bluetooth mic shows up here as soon as it's plugged in or connected.</div>
+      <div class="chiprow">${p.prof.clean.map(k => `<button class="pchip ${on(p.clean[k])}" data-pclean="${k}">${CLEAN[k]}</button>`).join("")}</div>` : ""}
+    <div class="opt ${on(p.micOnly)}" data-pa="miconly"><span>Mic only (camera off)</span><span class="muted">${p.micOnly ? "on" : "off"}</span></div>
     <h3>Video</h3>
-    <div class="chiprow">${camOf(p).modes.map(m => `<button class="pchip ${m === p.quality ? "on" : ""}" data-pq="${m}">${m}</button>`).join("")}</div>
-  </div>` : ""}
-  <div class="rail dense">
-    ${c.flash ? `<button class="rbtn rel ${p.torch ? "on" : ""}" data-pa="torch" data-badge="P1" title="Torch">${IC.torch}</button>` : ""}
-    ${p.cams.length > 1 ? `<button class="rbtn rel" data-pa="flip" data-badge="P1" title="Switch camera (${p.cams.length} available)">${IC.flip}</button>` : ""}
-    <button class="rbtn rel ${p.mic ? "" : "on"}" data-pa="mic" data-badge="P2" title="Mic">${p.mic ? IC.mic : IC.micoff}</button>
-    <button class="rbtn rel ${p.mirror ? "on" : ""}" data-pa="mirror" data-badge="NEW" title="Mirror left-right (OBS too)">${IC.mirror}</button>
-    <button class="rbtn rel ${p.vflip ? "on" : ""}" data-pa="vflip" data-badge="NEW" title="Flip upside-down (OBS too)">${IC.vflip}</button>
-    <button class="rbtn rel ${p.lock ? "on" : ""}" data-pa="lock" data-badge="NEW" title="Lock orientation">${IC.lock}</button>
-    <button class="rbtn rel" data-pa="saver" data-badge="NEW" title="Black screen">${IC.moon}</button>
-  </div>
-  <button class="linkbtn mockbtn turnbtn" data-pa="turn" style="position:absolute;left:10px;right:auto;top:auto;bottom:4px;z-index:4">(mock) turn the phone</button>
-  <div class="zoomui">${z
-    ? `<span class="zval" data-r="pz"></span><div class="pchips rel" data-badge="P1">${ps.map(v => `<button class="pchip" data-pp="${v}">${fx(v)}</button>`).join("")}</div><input type="range" class="ruler" min="0" max="1000" data-r="psl">`
-    : `<span class="nozoom">${esc(c.label)}: this camera can't zoom</span>`}</div>
-  <div class="toast" data-r="toast"></div>`;
+    <div class="chiprow">${c.modes.map(m => `<button class="pchip ${on(m === p.quality)}" data-pq="${m}">${fq(m)}</button>`).join("")}</div>
+    <div class="info">H.264 &#183; 31.5 Mb/s &#183; battery 100% &#183; ${tempOf(p)}&#176;C</div>
+    ${p.micOnly ? "" : `<h3>Picture</h3>
+    <div class="chipset"><button class="pchip ${on(p.mirror)}" data-pt="mirror">Mirror</button><button class="pchip ${on(p.vflip)}" data-pt="vflip">Flip</button><button class="pchip ${on(p.lock)}" data-pt="lock">Lock turn</button></div>
+    <div class="chipset"><span class="lab">White balance</span>${WB.map(([k, l]) => `<button class="pchip ${on(p.wb === k)}" data-wb="${k}">${l}</button>`).join("")}</div>
+    <div class="chipset"><button class="pbtn ghost" data-pa="snap">Snapshot to PC</button><span class="muted">tap the picture to focus, hold to lock</span></div>
+    <h3>Overlays</h3>
+    <div class="chipset"><span class="lab">Grid</span>${placeChips(p.grid, "gp")}</div>
+    ${moduleInstalled() ? `<div class="chipset"><span class="lab">Detection</span>${placeChips(p.det, "dp")}</div>` : ""}
+    <div class="chipset"><span class="lab">Level line</span><button class="pchip ${on(p.levelLine)}" data-pa="levelline">${p.levelLine ? "On" : "Off"}</button><span class="muted">this phone only</span></div>`}
+    ${moduleInstalled() ? `<h3>Gestures</h3>
+    <div class="opt ${on(p.gest)}" data-pa="gest"><span>Gestures ${p.gest ? "on" : "off"}</span><span class="muted">Rely-A-Cam-Gestures on the PC</span></div>
+    ${p.gest ? `<div class="opt" data-pa="library"><span>Library</span><span class="muted">gestures, actions, memes &#8250;</span></div>` : ""}` : ""}
+  </div>`;
 }
 const scanCam = () => phones[0].cams.find(c => c.facing === "back") || phones[0].cams[0];
 function phoneScanHTML() {
@@ -698,14 +937,29 @@ function buildPhone() {
   ph.className = "phone " + (screen === "scan" || screen === "error" ? "port" : p.upright);
   el.innerHTML = screen === "scan" ? phoneScanHTML() : screen === "saver" ? phoneSaverHTML() : screen === "error" ? phoneErrorHTML() : phoneLiveHTML(p);
   const r = n => el.querySelector(`[data-r="${n}"]`);
-  ["pz", "psl", "sz", "drift", "toast", "pmeter", "pclip", "pbig"].forEach(k => R[k] = r(k));
+  ["pz", "phd", "sz", "drift", "toast", "pmeter", "pclip", "pbig", "lvl", "lvlt"].forEach(k => R[k] = r(k));
   R.phoneWorld = r("pvp")?.querySelector(".world") || null;
-  R.phoneChips = [...el.querySelectorAll("[data-pp]")];
+  R.phoneChips = [];
   if (screen === "live") {
     const vp = r("pvp");
     wheelZoom(vp, () => p.target, v => phoneSet(p, v));
     pinchZoom(vp, () => p.target, v => phoneSet(p, v));
-    R.psl?.addEventListener("input", e => phoneSet(p, fromPos(camOf(p), +e.target.value)));
+    rulerDrag(r("prul"), camOf(p), v => phoneSet(p, v));
+    r("pev")?.addEventListener("input", e => { p.ev = +e.target.value; p.focusAt = performance.now(); });
+    /* tap = focus there (ring + brightness for 3 s); press and hold = AE/AF lock */
+    let hold = null, at = null;
+    vp.addEventListener("pointerdown", e => {
+      if (p.micOnly || e.button > 0) return;
+      const rc = vp.getBoundingClientRect();
+      at = { x: +((e.clientX - rc.left) / rc.width * 100).toFixed(1), y: +((e.clientY - rc.top) / rc.height * 100).toFixed(1) };
+      hold = setTimeout(() => { hold = null; Object.assign(p, { focus: at, aeLock: true, focusAt: performance.now() }); renderAll(); toast("Focus and exposure locked"); }, 600);
+    });
+    vp.addEventListener("pointerup", () => {
+      if (!hold) return;
+      clearTimeout(hold); hold = null;
+      Object.assign(p, { focus: at, aeLock: false, focusAt: performance.now() }); renderAll();
+    });
+    vp.addEventListener("pointerleave", () => { clearTimeout(hold); hold = null; });
   }
   R.sworld = r("sworld"); R.sz2 = r("sz2"); R.scanChips = [...el.querySelectorAll("[data-sp]")];
   if (screen === "scan") {
@@ -723,7 +977,8 @@ function buildPhone() {
   clearInterval(driftTimer);
   if (screen === "saver") driftTimer = setInterval(() => { if (R.drift) { R.drift.style.left = (5 + Math.random() * 60) + "%"; R.drift.style.top = (10 + Math.random() * 75) + "%"; } }, 3500);
   const c = camOf(p);
-  $("#phoneNote").innerHTML = `Showing Phone 1 (${esc(p.prof.name)}), ${esc(c.label)} camera, ${fx(c.min)}${c.max > c.min ? " to " + fx(c.max) : " only"}. Scroll over the screen to pinch.`;
+  $("#phoneNote").innerHTML = `Showing Phone 1 (${esc(p.prof.name)}), ${esc(c.label)} camera, ${fx(c.min)}${c.max > c.min ? " to " + fx(c.max) : " only"}. Scroll over the screen to pinch.`
+    + (screen === "live" ? ` <button class="linkbtn" data-turn>(mock) turn the phone</button>` : "");
 }
 function toast(msg) { if (!R.toast) return; R.toast.textContent = msg; R.toast.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => R.toast && R.toast.classList.remove("show"), 1800); }
 function setScreen(s) { screen = s; document.querySelectorAll("#screenSeg button").forEach(b => b.classList.toggle("on", b.dataset.s === s)); buildPhone(); }
@@ -734,6 +989,10 @@ $("#pscreen").addEventListener("click", e => {
     const mi = e.target.closest("[data-micin]"); if (mi) { p.micIn = mi.dataset.micin; renderAll(); }
     const pc = e.target.closest("[data-pclean]"); if (pc) { p.clean[pc.dataset.pclean] = !p.clean[pc.dataset.pclean]; renderAll(); }
     const pq = e.target.closest("[data-pq]"); if (pq) { p.quality = pq.dataset.pq; renderAll(); }
+    const pt = e.target.closest("[data-pt]"); if (pt) { p[pt.dataset.pt] = !p[pt.dataset.pt]; renderAll(); }
+    const wb = e.target.closest("[data-wb]"); if (wb) { p.wb = wb.dataset.wb; renderAll(); }
+    const gp = e.target.closest("[data-gp]"); if (gp) { p.grid[gp.dataset.gp] = !p.grid[gp.dataset.gp]; renderAll(); }
+    const dp = e.target.closest("[data-dp]"); if (dp) { p.det[dp.dataset.dp] = !p.det[dp.dataset.dp]; renderAll(); }
     return; }
   switch (a.dataset.pa) {
     case "storch": scanTorch = !scanTorch; buildPhone(); break;
@@ -749,6 +1008,11 @@ $("#pscreen").addEventListener("click", e => {
     case "turn":
       if (p.lock) { toast("Locked: OBS keeps this shape"); break; }
       p.upright = p.upright === "land" ? "port" : "land"; renderAll(); break;
+    case "stop": toast("(mock) Stop ends the stream and goes back to Scan"); break;
+    case "snap": snapshot(p); break;
+    case "levelline": p.levelLine = !p.levelLine; renderAll(); break;
+    case "gest": p.gest = !p.gest; renderAll(); break;
+    case "library": toast("Library: gestures, actions, memes (Phase B)"); break;
     case "saver": setScreen("saver"); break;
     case "wake": setScreen("live"); break;
     case "scanhit": case "reconnect": toast("Connected to OBS on your PC"); setTimeout(() => setScreen("live"), 700); break;
@@ -765,10 +1029,10 @@ function buildObs() {
   document.querySelectorAll("#layoutSeg button").forEach(b => b.classList.toggle("on", b.dataset.l === cur));
   $("#sources").innerHTML = phones.map((p, i) => `<div class="item ${i === sel ? "sel" : ""}"><span>Phone - ${esc(p.prof.name)}</span><small>${p.micOnly ? "camera off" : i === 0 ? "full frame" : "picture-in-picture"}</small></div>`).join("")
     + phones.filter(p => !p.global).map(p => `<div class="item"><span>Phone Mic - ${esc(p.prof.name)}</span><small>audio</small></div>`).join("");
-  $("#mixer").innerHTML = phones.map((p, i) => `<div class="ch"><span>Phone Mic - ${esc(p.prof.name)}<span class="tag ${p.global ? "g" : ""}">${p.global ? "every scene" : "this scene"}</span></span><small class="${p.mic ? "" : "warm"}">${p.mic ? "" : "muted"}</small><span class="meter"><i data-mx="${i}"></i></span></div>`).join("")
+  $("#mixer").innerHTML = phones.map((p, i) => `<div class="ch"><span>Phone Mic - ${esc(p.prof.name)}<span class="tag ${p.global ? "g" : ""}">${p.global ? "every scene" : "this scene"}</span>${p.apps && p.mic ? `<span class="tag">other apps${p.defMic ? ", Windows default" : ""}</span>` : ""}</span><small class="${p.mic ? "" : "warm"}">${p.mic ? "" : "muted"}</small><span class="meter"><i data-mx="${i}"></i></span></div>`).join("")
     + `<div class="ch"><span>Desktop Audio</span><small></small><span class="meter"><i data-mx="d"></i></span></div>`;
   R.mix = [...document.querySelectorAll("[data-mx]")];
-  $("#mainVp").innerHTML = worldHTML(phones[0]);
+  $("#mainVp").innerHTML = worldHTML(phones[0]) + (phones[0].grid.out && !phones[0].micOnly ? GRID : "");
   $("#mainVp").classList.toggle("portv", phones[0].upright === "port");
   R.mainWorld = $("#mainVp .world");
   const pip = $("#pipVp");
@@ -803,6 +1067,9 @@ function frame(t) {
     if (p.clean.agc) p.level = Math.min(p.level, 0.78);
   }
   deskLevel = Math.min(1, deskLevel * 0.85 + Math.random() * 0.12);
+  phones[0].tilt = 1.6 * Math.sin(t / 2600);
+  const f0 = phones[0];
+  if (f0.focus && !f0.aeLock && t - f0.focusAt > 3000) { f0.focus = null; buildPhone(); }
   paint();
   requestAnimationFrame(frame);
 }
@@ -814,6 +1081,18 @@ function paint() {
   if (R.pipWorld && phones[1]) R.pipWorld.style.transform = poseOf(phones[1], phones[1].real);
   if (R.phoneWorld) R.phoneWorld.style.transform = poseOf(p0, p0.cur);
   if (R.pz) R.pz.textContent = fz(p0.cur);
+  if (R.phd) R.phd.style.left = (toPos(camOf(p0), p0.cur) / 10) + "%";
+  if (R.mainWorld) R.mainWorld.style.filter = filterOf(p0);
+  if (R.pipWorld && phones[1]) R.pipWorld.style.filter = filterOf(phones[1]);
+  if (R.phoneWorld) R.phoneWorld.style.filter = filterOf(p0);
+  if (R.dockWorld && ps) R.dockWorld.style.filter = filterOf(ps);
+  if (R.dhd && ps) R.dhd.style.left = (toPos(camOf(ps), ps.shown) / 10) + "%";
+  if (R.dnote) R.dnote.textContent = performance.now() - dockMsg.t < 4000 ? dockMsg.s : "";
+  if (R.lvl) {
+    const a = p0.tilt, ok = Math.abs(a) < 0.5;
+    R.lvl.style.transform = `rotate(${a.toFixed(2)}deg)`; R.lvl.classList.toggle("ok", ok);
+    R.lvlt.textContent = ok ? "level" : (a > 0 ? "+" : "") + a.toFixed(1) + "°";
+  }
   for (const k of ["pmeter", "pbig"]) if (R[k]) R[k].style.width = (100 - p0.level * 100) + "%";
   R.pclip?.classList.toggle("on", p0.level > 0.93);
   if (R.sz) R.sz.textContent = fz(p0.cur);
@@ -840,6 +1119,14 @@ function paint() {
 $("#prof1").addEventListener("change", e => { phones[0] = mkPhone(e.target.value, true); renderAll(); });
 $("#delay").addEventListener("change", renderAll);
 $("#badges").addEventListener("change", e => document.body.classList.toggle("badges", e.target.checked));
+$("#cable").addEventListener("change", e => { cableInstalled = e.target.checked; if (!cableInstalled) phones.forEach(q => { q.apps = false; }); renderAll(); });
+$("#gmod").addEventListener("change", renderAll);
+$("#phoneNote").addEventListener("click", e => {
+  if (!e.target.closest("[data-turn]")) return;
+  const p = phones[0];
+  if (p.lock) { toast("Locked: OBS keeps this shape"); return; }
+  p.upright = p.upright === "land" ? "port" : "land"; renderAll();
+});
 document.querySelectorAll("#layoutSeg button").forEach(b => b.addEventListener("click", () => {
   if (b.dataset.l === "C") floating = true; else { floating = false; showPreview = b.dataset.l === "A"; }
   renderAll();
@@ -892,8 +1179,27 @@ if (params.get("phones") === "2") phones.push(mkPhone($("#prof1").value === "exA
 if (params.get("cam")) { const p = phones[0], i = +params.get("cam"); if (p.cams[i]) { p.cam = i; resetCam(p); } }
 const z = parseFloat(params.get("zoom"));
 if (z) { const p = phones[0], v = clampZ(camOf(p), z); Object.assign(p, { target: v, cur: v, real: v, shown: v, hist: [{ t: performance.now(), v }] }); }
+/* round 5 screenshot params: port=1 sheet=1 q=4K grid=1 cable=1 gmod=1 lock=1 level=1 menu=1 dlg=cable */
+{
+  const p = phones[0];
+  if (params.get("port") === "1") p.upright = "port";
+  if (params.get("sheet") === "1") p.sheet = true;
+  if (params.get("q")) { const m = camOf(p).modes.find(x => x.startsWith(params.get("q"))); if (m) p.quality = m; }
+  if (params.get("grid") === "1") p.grid = { dock: true, phone: true, out: false };
+  if (params.get("cable") === "1") { cableInstalled = true; $("#cable").checked = true; }
+  if (params.get("gmod") === "1") $("#gmod").checked = true;
+  if (params.get("lock") === "1") Object.assign(p, { aeLock: true, focus: { x: 46, y: 44 }, focusAt: 1e12 });
+  if (params.get("level") === "1") p.levelLine = true;
+}
 document.querySelectorAll("#screenSeg button").forEach(b => b.classList.toggle("on", b.dataset.s === screen));
 renderAll();
+if (params.get("menu") === "1") setTimeout(() => {
+  const b = document.querySelector('[data-r="dmore"]'), rc = b.getBoundingClientRect();
+  openMenu(dockMenu(phones[sel]), rc.left, rc.bottom + 2);
+  const mic = [...menus[0].querySelectorAll(".mi")].find(x => x.textContent.includes("Mic"));
+  mic?.dispatchEvent(new MouseEvent("mouseenter"));
+}, 50);
+if (params.get("dlg") === "cable") cableInstallDlg(phones[0]);
 requestAnimationFrame(frame);
 </script>
 </body>

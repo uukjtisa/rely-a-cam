@@ -46,14 +46,31 @@ canvas. Nothing else in your scenes changes.
 
 ![Live: the dock in OBS and the phone app](docs/img/mock-live.png)
 
-- **Zoom from OBS:** scroll over the dock preview, pinch on a touchpad, drag the slider, click a
-  preset, or press `+`, `-` or `1`-`9` with the preview focused. You can also assign hotkeys in
-  **Settings > Hotkeys**, listed under the phone's source.
-- **Zoom from the phone:** pinch on the screen, use the preset chips, or drag the ruler.
-- **Turn the phone** and the OBS source turns with it. **Lock** keeps the current shape.
+- **Zoom from OBS:** scroll over the dock preview, pinch on a touchpad, drag the ruler under it,
+  click a value on the ruler, or press `+`, `-` or `1`-`9` with the preview focused. You can also
+  assign hotkeys in **Settings > Hotkeys**, listed under the phone's source.
+- **Zoom from the phone:** pinch on the screen, or drag the ruler (tap a value to jump to it).
+- **The dock's buttons:** mic (blue when on, red when muted), torch, snapshot, and **⋯** for
+  everything else. Right-clicking the preview opens the same menu: Camera, Quality, Picture, Mic,
+  Overlays, Show preview, and Connect a phone over USB.
+- **On the phone:** the right rail has torch, camera switch, mic, black screen and **Setup** (the
+  gear). Tapping the status line opens Setup too. The status bar hides while live; swipe from the
+  top edge to see it.
+- **Focus:** tap the phone's screen to focus there, and drag the brightness slider that appears.
+  **Hold** for about half a second to lock focus and exposure (the dock's Picture menu has the
+  same lock, metered on the centre). Tap again to unlock.
+- **White balance:** Auto, Lock current, or a preset (Daylight, Cloudy, Indoor, Fluorescent), in
+  Picture on both sides. You only see the ones that camera has.
+- **Snapshot:** the camera button in the dock (or Picture > Snapshot to PC on either side) takes a
+  full-resolution photo and saves it on the PC in **Pictures\Rely-A-Cam**. The stream keeps
+  going while it does.
+- **Grid:** Overlays > Grid draws a rule-of-thirds grid, separately on the dock, the phone and
+  the OBS output. Setup on the phone also has a **level line**, shown on that phone only.
+- **Turn the phone** and the OBS source turns with it. **Lock turn** keeps the current shape.
 - **Mirror**, **Flip**, **Torch**, **Mic** and the camera switch work from both sides.
-- **Quality:** pick a mode in the dock or on the phone (**Setup** on the phone). You only see
-  modes the phone supports. 1080p30 is the default.
+- **Quality:** pick a mode in the dock (Quality) or on the phone (Setup). You only see modes the
+  phone supports. 1080p30 is the default. From 45 °C the status line turns yellow and suggests a
+  lighter mode ("hot: try 1080p").
 - **Black screen** on the phone saves battery and heat while streaming. Tap to wake.
 - **Stop** on the phone, or its notification, turns the camera and mic off at once.
 
@@ -62,7 +79,10 @@ remembers each phone's camera, zoom (per camera), quality, mic, mirror, flip and
 
 ## The phone's mic
 
-![The dock's Mic section and the phone mic sources in OBS's Audio Mixer](docs/img/mock-mic.png)
+![The dock's Mic menu and the phone mic sources in OBS's Audio Mixer](docs/img/mock-mic.png)
+
+In the dock, all of this is under **⋯ > Mic**. Input, Clean-up, Every scene and Use in other apps
+show while the mic is on.
 
 Each phone's mic is its own source in OBS, **Phone Mic - <phone>**, separate from its camera. So
 one phone can be your main mic while you switch to another phone's camera.
@@ -82,22 +102,30 @@ one phone can be your main mic while you switch to another phone's camera.
   the phone back, or turn on Auto gain.
 - **Mic only** turns the phone's camera off and keeps the mic. It saves battery and heat when a
   phone is only there to listen.
-- On the phone, all of this is under **Setup** (the rail button, or tap the quality line).
+- On the phone, all of this is under **Setup** (the gear, or tap the status line).
 - Volume, filters (noise gate, compressor), monitoring and sync offset are OBS's own: use the
   Audio Mixer, as with any mic.
 
 ### Use the phone mic in Chrome, Discord or Zoom
 
-Windows can only see an OBS source as a microphone through a virtual audio cable.
+Windows can only see an OBS source as a microphone through a virtual audio cable. Rely-A-Cam
+sets up the free [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) for you:
 
-1. Install the free [VB-Audio Virtual Cable](https://vb-audio.com/Cable/), then restart the PC.
-2. In the dock, select the phone and turn on **Use in other apps**.
-3. In Chrome, Discord or Zoom, pick **CABLE Output** as the microphone.
+1. In the dock, select the phone, then **⋯ > Mic > Use in other apps...**
+2. Click **Download and install**. Rely-A-Cam downloads the cable from vb-audio.com, checks it's
+   signed by VB-Audio, and installs it. Windows asks for admin permission, then shows its own
+   "Install this device software?" box: click **Install**. Your speakers and mic stay Windows'
+   defaults.
+3. That's it. While the phone's mic is on, it's Windows' default mic, so apps left on "Default"
+   use it. Apps with a mic list can pick **CABLE Output**.
 
-This plays the mic into the cable through OBS's audio monitoring. While it's on, anything else
-you set to monitor in OBS goes into the cable too, not to your headphones. Turning it off gives
-OBS its old monitoring device back. If the cable isn't installed, the button opens its download
-page instead.
+- Mute the mic on the phone or in OBS, or disconnect the phone, and Windows gets its old default
+  mic back. Untick **...and be Windows' default mic** to leave the default alone and pick CABLE
+  Output in each app instead.
+- If you change Windows' default mic yourself while the phone has it, yours wins.
+- OBS's own monitoring isn't touched: your headphones keep hearing what you set them to.
+- **Remove VB-Cable...** in the same menu uninstalls it. Uninstalling Rely-A-Cam offers to remove
+  it too, but only if Rely-A-Cam installed it.
 
 ## When a phone can't connect
 
@@ -121,7 +149,8 @@ USB works without any network, and has the lowest delay.
    seven times.
 2. In Developer options, turn on **USB debugging**.
 3. Plug in and accept the "Allow USB debugging?" prompt on the phone.
-4. In the dock, click **USB**. The app opens on the phone and connects through the cable.
+4. In the dock, click **⋯ > Connect a phone over USB** (or **Connect over USB** under the
+   Add phone QR). The app opens on the phone and connects through the cable.
 
 ## Updates
 
@@ -130,5 +159,6 @@ phone shows a banner. Update both, since a release always covers the pair.
 
 ## Uninstall
 
-- **PC:** Windows Settings > Apps > "Rely-A-Cam for OBS". This also removes the firewall rules.
+- **PC:** Windows Settings > Apps > "Rely-A-Cam for OBS". This also removes the firewall rules,
+  and offers to remove VB-Audio Virtual Cable if Rely-A-Cam installed it.
 - **Phone:** uninstall the app as usual.

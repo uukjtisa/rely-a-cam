@@ -6,8 +6,15 @@ pinch on the phone or scroll in OBS, and the phone's camera follows.
 - **Free, and it stays free.** No account, no cloud, no ads, no tracking, no watermark and no
   paywall. The phone talks to your PC directly.
 - **Synced zoom.** You can zoom from the phone or from OBS, using the mouse wheel, a touchpad
-  pinch, the slider, presets or hotkeys. Presets come from your phone's own lenses, including
+  pinch, the ruler, presets or hotkeys. Presets come from your phone's own lenses, including
   ultrawide lenses that other apps can't see.
+- **Camera controls from either side:** tap to focus with a brightness slider, hold to lock focus
+  and exposure, white balance presets, and full-resolution snapshots saved on the PC while the
+  stream keeps going.
+- **Framing help:** a rule-of-thirds grid on the phone, the dock or the OBS output (each on its
+  own), and a level line on the phone.
+- **The phone's mic in other apps:** one click sets up VB-Audio Virtual Cable, and the phone
+  becomes Windows' default mic while its mic is on.
 - **Pair by QR.** Scan the code in OBS's Phone Camera dock. Reconnects on its own after that.
 - **Wi-Fi, phone hotspot or USB.**
 - **Up to 4K**, if the phone can encode it. Only modes the phone really supports are offered.

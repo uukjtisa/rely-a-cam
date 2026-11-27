@@ -21,8 +21,9 @@ android/             Gradle, Kotlin
   core/qr/           QR decoding (zxing core; from Filet)
 obs-plugin/          C++ / CMake, based on the OBS plugin template
   src/source/        the OBS sources: the camera (video) and the phone's mic (audio, its own source)
-  src/audio/         where a phone mic is heard (every scene = global channels 7+) and Use in other apps
-  src/dock/          the Qt dock: preview, presets, slider, QR panel
+  src/audio/         where a phone mic is heard (every scene = global channels 7+); cable.cpp owns
+                     VB-Cable: install/remove, the WASAPI writer into CABLE Input, Windows' default mic
+  src/dock/          the Qt dock: status line, preview, slim ruler, icon tools, one menu, QR panel
   src/net/           listener, pairing, protocol
   src/decode/        FFmpeg H.264 / HEVC / AAC decoding
   src/sys/           Windows glue: firewall rules, bundled adb, updater (WinHTTP)
@@ -51,15 +52,19 @@ scripts/             package.ps1 (both halves -> release/), release.ps1 (GitHub 
 4. **One owner per job.** Camera: `android/core/camera`. Wire format: `protocol/PROTOCOL.md`,
    implemented once per side (`android/core/protocol`, `obs-plugin/src/net`). A second
    implementation of any of these is a bug, not a shortcut.
-5. **The dock uses OBS's theme.** No hardcoded colours in the plugin; read the palette OBS gives
-   Qt. The phone app's look follows `docs/mock.html` until `docs/DESIGN.md` exists.
-6. **Must never:**
+5. **Both halves follow `docs/DESIGN.md`** (the standard) and `docs/mock.html` (the approved
+   look). The dock reads the palette OBS gives Qt; its few fixed colours are listed in DESIGN.md
+   rule 8, and a new one is added there before it's used.
+6. **"Use in other apps" never touches OBS's monitoring device.** The plugin writes into CABLE
+   Input itself (`src/audio/cable.cpp`), and changes Windows' default mic only on the edges of
+   "the phone's mic is on", never in a loop that would fight a default the owner picked.
+7. **Must never:**
    - need an account or a cloud server (phone and PC talk directly);
    - show ads, track usage, watermark, or lock anything behind a payment;
    - change the owner's OBS scenes, except adding its own source when a phone is added;
    - keep the camera or mic running after streaming stops. Stopping releases both and removes
      the notification.
-7. **Failures say why.** A phone that can't reach the PC names the likely cause (Windows
+8. **Failures say why.** A phone that can't reach the PC names the likely cause (Windows
    Firewall on a Public network, different networks). It never just says "failed".
 
 ## Testing

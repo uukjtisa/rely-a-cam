@@ -69,6 +69,17 @@ class VectorsTest {
         }
     }
 
+    @Test fun heat() {
+        val a = v.getJSONArray("heat")
+        for (i in 0 until a.length()) {
+            val c = a.getJSONObject(i)
+            val modes = c.getJSONArray("modes").let { l -> (0 until l.length()).map { l.getString(it) } }
+            assertEquals(c.toString(), c.getString("expect"), Heat.suggest(modes, c.getString("current")).orEmpty())
+        }
+        assertEquals(false, Heat.hot(44.9))
+        assertEquals(true, Heat.hot(45.0))
+    }
+
     @Test fun codes() {
         val a = v.getJSONArray("codes")
         for (i in 0 until a.length()) {
@@ -80,15 +91,24 @@ class VectorsTest {
 
     @Test fun cmdRoundTrip() {
         val cmd = Cmd(cam = "4", zoom = 2.4, mirror = true, zooms = mapOf("4" to 2.4, "1" to 1.0),
-            micIn = "15:back", ns = true, agc = false, micOnly = true)
+            micIn = "15:back", ns = true, agc = false, micOnly = true,
+            aeLock = true, ev = -0.667, wb = "cloudy", snap = true, grid = mapOf("out" to true))
         assertEquals(cmd, Cmd.fromJson(JSONObject(cmd.toJson().toString())))
+        // An older plugin's CMD has none of the picture keys: nothing changes.
+        val old = Cmd.fromJson(JSONObject("""{"zoom":2.0}"""))
+        assertEquals(null, old.aeLock); assertEquals(null, old.ev); assertEquals(false, old.snap)
+        assertEquals(emptyMap<String, Boolean>(), old.grid)
     }
 
     @Test fun capsAndStateRoundTrip() {
-        val caps = Caps("nova 10", emptyList(), listOf("h264"), true,
+        val cam = CamCaps("4", "back", "Back", 0.65, 10.0, listOf(0.65, 1.0), true, listOf("1920x1080@30"),
+            ev = listOf(-2.0, 2.0, 0.167), wb = listOf("auto", "lock", "cloudy"), aeLock = true)
+        val caps = Caps("nova 10", listOf(cam), listOf("h264"), true,
             listOf(MicInput("15:bottom", "Bottom mic"), MicInput("15:back", "Back mic")), listOf("ns", "agc"))
         assertEquals(caps, Caps.fromJson(JSONObject(caps.toJson().toString())))
-        val st = CamState(cam = "4", micIn = "15:back", ns = true, aec = true, micOnly = true)
+        val st = CamState(cam = "4", micIn = "15:back", ns = true, aec = true, micOnly = true,
+            aeLock = true, ev = 0.333, wb = "lock", snap = "4096x3072", grid = Grid(dock = true, out = true))
         assertEquals(st, CamState.fromJson(JSONObject(st.toJson().toString())))
+        assertEquals(Grid(dock = true, phone = true, out = true), Grid(dock = true, out = true).with(mapOf("phone" to true)))
     }
 }

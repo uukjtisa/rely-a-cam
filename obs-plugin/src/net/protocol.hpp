@@ -32,6 +32,7 @@ enum class Type : uint8_t {
 	Video = 0x11,
 	AConf = 0x12,
 	Audio = 0x13,
+	Snap = 0x14,
 };
 
 struct Frame {
@@ -91,7 +92,23 @@ struct Cam {
 	std::vector<double> lenses;
 	bool flash = false;
 	std::vector<std::string> modes;
+	/** Brightness range and step in EV: {min, max, step}; empty when the camera has none. */
+	std::vector<double> ev;
+	/** White balance choices, from kWhiteBalance, in that order. */
+	std::vector<std::string> wb;
+	/** The camera can lock focus and exposure. */
+	bool aeLock = false;
 	bool canZoom() const { return max > min + 1e-3; }
+	bool hasEv() const { return ev.size() == 3 && ev[1] > ev[0]; }
+};
+
+/** White balance choices (PROTOCOL.md, CAPS `wb`), in the order menus list them. */
+extern const char *const kWhiteBalance[6];
+std::string whiteBalanceLabel(const std::string &k);
+
+/** Where the rule-of-thirds grid is drawn (PROTOCOL.md, STATE `grid`). */
+struct Grid {
+	bool dock = false, phone = false, out = false;
 };
 
 /** An audio input the phone has right now (its id only means something to that phone). */
@@ -121,8 +138,21 @@ struct State {
 	double temp = 0;
 	std::string micIn;
 	bool ns = false, aec = false, agc = false, micOnly = false;
+	/** Focus and exposure locked; brightness in EV; white balance choice. */
+	bool aeLock = false;
+	double ev = 0;
+	std::string wb = "auto";
+	/** The photo size a snap request would send now ("4096x3072"), or empty when there's none. */
+	std::string snap;
+	Grid grid;
 	static State fromJson(const std::string &json);
 };
+
+/** The heat warning (PROTOCOL.md, "Heat"). */
+constexpr double kHotC = 45.0;
+inline bool isHot(double temp) { return temp >= kHotC; }
+/** The mode to suggest while hot, or empty: the default when above it, else the next smaller. */
+std::string heatSuggestion(const std::vector<std::string> &modes, const std::string &current);
 
 /** Preset zoom stops from the report: lens stops in range, plus 2x unless a lens is within 20%. */
 std::vector<double> presets(double min, double max, const std::vector<double> &lenses);

@@ -231,6 +231,15 @@ Caps Caps::fromJson(const std::string &text)
 				for (auto &l : o["modes"])
 					if (l.is_string())
 						m.modes.push_back(l.get<std::string>());
+			if (o.contains("ev") && o["ev"].is_array())
+				for (auto &l : o["ev"])
+					if (l.is_number())
+						m.ev.push_back(l.get<double>());
+			if (o.contains("wb") && o["wb"].is_array())
+				for (auto &l : o["wb"])
+					if (l.is_string())
+						m.wb.push_back(l.get<std::string>());
+			m.aeLock = o.value("aeLock", false);
 			c.cams.push_back(m);
 		}
 	}
@@ -261,7 +270,36 @@ State State::fromJson(const std::string &text)
 	s.aec = j.value("aec", false);
 	s.agc = j.value("agc", false);
 	s.micOnly = j.value("micOnly", false);
+	s.aeLock = j.value("aeLock", false);
+	s.ev = j.value("ev", 0.0);
+	s.wb = j.value("wb", "auto");
+	s.snap = j.value("snap", "");
+	if (j.contains("grid") && j["grid"].is_object()) {
+		const json &g = j["grid"];
+		s.grid.dock = g.value("dock", false);
+		s.grid.phone = g.value("phone", false);
+		s.grid.out = g.value("out", false);
+	}
 	return s;
+}
+
+const char *const kWhiteBalance[6] = {"auto", "lock", "daylight", "cloudy", "indoor", "fluorescent"};
+
+std::string whiteBalanceLabel(const std::string &k)
+{
+	if (k == "auto")
+		return "Auto";
+	if (k == "lock")
+		return "Lock current";
+	if (k == "daylight")
+		return "Daylight";
+	if (k == "cloudy")
+		return "Cloudy";
+	if (k == "indoor")
+		return "Indoor";
+	if (k == "fluorescent")
+		return "Fluorescent";
+	return k;
 }
 
 bool Caps::hasClean(const std::string &k) const
@@ -345,6 +383,31 @@ std::string defaultMode(const std::vector<std::string> &modes)
 		}
 	}
 	return best.empty() ? smallest : best;
+}
+
+std::string heatSuggestion(const std::vector<std::string> &modes, const std::string &current)
+{
+	int w, h, fps;
+	if (!parseMode(current, w, h, fps))
+		return "";
+	const long long cur = (long long)w * h * fps;
+	auto cost = [](const std::string &m) -> long long {
+		int a, b, f;
+		return parseMode(m, a, b, f) ? (long long)a * b * f : -1;
+	};
+	const std::string def = defaultMode(modes);
+	if (!def.empty() && cost(def) >= 0 && cost(def) < cur)
+		return def;
+	std::string best;
+	long long bestCost = -1;
+	for (auto &m : modes) {
+		const long long c = cost(m);
+		if (c >= 0 && c < cur && c > bestCost) {
+			best = m;
+			bestCost = c;
+		}
+	}
+	return best;
 }
 
 std::string normaliseCode(const std::string &raw)

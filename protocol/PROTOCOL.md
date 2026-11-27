@@ -74,21 +74,32 @@ flags   := 1 = key frame, 2 = codec config
 | 0x11 | VIDEO | phone to PC | media: Annex B access unit (start codes included). A config frame carries SPS/PPS (and VPS) |
 | 0x12 | ACONF | phone to PC | JSON `{"codec":"aac","rate":48000,"ch":1}` |
 | 0x13 | AUDIO | phone to PC | media: one raw AAC access unit. A config frame carries the AudioSpecificConfig |
+| 0x14 | SNAP | phone to PC | a whole JPEG file, the answer to CMD `{"snap":true}`. It is turned upright (EXIF or pixels); mirror and flip are not applied |
 
 `restore` in WELCOME has the same keys as CMD. It holds what OBS remembered for this phone's
-source (camera, zoom per camera, mode, mirror, flip, lock). The phone applies it, because OBS
-wins on reconnect.
+source (camera, zoom per camera, mode, mirror, flip, lock, white balance, brightness, grid). The
+phone applies it, because OBS wins on reconnect. `snap` is never part of `restore`.
+
+A plugin that doesn't know a frame type ignores it, so a new type never needs a version bump.
 
 ## Capability report (CAPS)
 
 ```json
 {"device":"nova 10",
  "cams":[{"id":"4","facing":"back","label":"Back","min":0.65,"max":10.0,"lenses":[0.65,1.0],
-          "flash":true,"modes":["1280x720@30","1920x1080@30","3840x2160@30"]}],
+          "flash":true,"modes":["1280x720@30","1920x1080@30","3840x2160@30"],
+          "ev":[-2.0,2.0,0.167],"wb":["auto","lock","daylight","cloudy","indoor","fluorescent"],
+          "aeLock":true}],
  "codecs":["h264","hevc"],"mic":true,
  "mics":[{"id":"15:bottom","label":"Bottom mic"},{"id":"15:back","label":"Back mic"}],
  "clean":["ns","aec","agc"]}
 ```
+
+- `ev` is the brightness (exposure compensation) range and step in EV: `[min, max, step]`. Absent
+  or empty when the camera has none.
+- `wb` lists the white balance choices the camera has, from `auto`, `lock` (keep the current
+  colours), `daylight`, `cloudy`, `indoor` (incandescent) and `fluorescent`, in that order.
+- `aeLock` is true when the camera can lock focus and exposure.
 
 - `mics` lists the audio inputs the phone has right now: its built-in mics, plus a wired, USB or
   Bluetooth input while one is connected. The phone sends a new CAPS when that list changes.
@@ -107,11 +118,20 @@ the same way on both sides:
 ```json
 {"cam":"4","zoom":2.4,"torch":false,"mic":true,"mode":"1920x1080@30","codec":"h264",
  "rot":90,"mirror":false,"flip":false,"lock":false,"temp":41.2,"battery":78,"live":true,
- "micIn":"15:bottom","ns":true,"aec":false,"agc":false,"micOnly":false}
+ "micIn":"15:bottom","ns":true,"aec":false,"agc":false,"micOnly":false,
+ "aeLock":false,"ev":0.0,"wb":"auto","snap":"4096x3072",
+ "grid":{"dock":false,"phone":false,"out":false}}
 ```
 
 - `micIn` is the input in use, from `mics`. `ns`, `aec` and `agc` say which clean-up effects are
   on.
+- `aeLock` means focus and exposure are locked (at the point last tapped, or the centre). `ev` is
+  the brightness in EV, inside the camera's `ev` range. `wb` is one of the camera's `wb` choices.
+- `snap` is the size of the photo a CMD `{"snap":true}` would send now, or empty when this camera
+  and quality can't take one. The PC offers Snapshot only while it's set.
+- `grid` says where the rule-of-thirds grid is drawn: the dock's preview, the phone's screen, and
+  the OBS output (what viewers see). The phone owns it like every other value, so both screens
+  agree; a CMD may carry any subset of the three keys.
 - `micOnly` means the camera is off and only the mic streams: no VIDEO frames arrive, and the PC
   shows nothing for that camera until it's false again.
 
@@ -124,6 +144,13 @@ the same way on both sides:
 - Frames are sent as the sensor produces them, and the PC does the turning when it draws. That
   costs the phone nothing.
 
+## Heat
+
+Both screens warn the same way, from STATE alone: at `temp` 45 °C or more the quality line turns
+yellow and suggests a mode. The suggestion is the default mode (see `defaultMode` in the vectors)
+when the current mode is above it, else the next smaller mode the camera has; with nothing
+smaller there's no suggestion. "Smaller" compares width × height × fps.
+
 ## Sequence
 
 ```
@@ -135,6 +162,8 @@ phone                                   PC
   VCONF, VIDEO(config), VIDEO(key) ...->
          <------------------------------  CMD {"zoom":2.0}
   STATE {"zoom":1.1 ... 2.0} (glides) ->
+         <------------------------------  CMD {"snap":true}
+  SNAP (JPEG) -------------------------->  saved on the PC
   PING / PONG either way, every 2 s; 6 s without any frame = dead link
 ```
 

@@ -119,7 +119,28 @@ int main()
 		CHECK(st.micIn == "15:back" && st.ns && !st.aec && st.agc && st.micOnly, "state mic fields");
 		const State old = State::fromJson(R"({"cam":"4","mic":true})");
 		CHECK(old.micIn.empty() && !old.ns && !old.micOnly, "state from an older app");
+		CHECK(!old.aeLock && old.ev == 0 && old.wb == "auto" && old.snap.empty() && !old.grid.out, "picture fields default");
 	}
+	{
+		// The picture fields, as PROTOCOL.md's CAPS and STATE examples write them.
+		cases++;
+		const Caps caps = Caps::fromJson(
+			R"({"device":"nova 10","cams":[{"id":"4","min":0.65,"max":10,"ev":[-2.0,2.0,0.167],)"
+			R"("wb":["auto","lock","cloudy"],"aeLock":true}],"codecs":["h264"],"mic":true})");
+		CHECK(caps.cams.size() == 1 && caps.cams[0].hasEv() && caps.cams[0].ev[2] > 0.16, "caps ev");
+		CHECK(caps.cams[0].wb.size() == 3 && caps.cams[0].wb[2] == "cloudy" && caps.cams[0].aeLock, "caps wb, aeLock");
+		const State st = State::fromJson(R"({"cam":"4","aeLock":true,"ev":-0.667,"wb":"lock","snap":"4096x3072",)"
+						 R"("grid":{"dock":true,"phone":false,"out":true}})");
+		CHECK(st.aeLock && std::fabs(st.ev + 0.667) < 1e-9 && st.wb == "lock" && st.snap == "4096x3072", "state picture fields");
+		CHECK(st.grid.dock && !st.grid.phone && st.grid.out, "state grid");
+	}
+	for (auto &c : v["heat"]) {
+		cases++;
+		CHECK(heatSuggestion(c["modes"].get<std::vector<std::string>>(), c["current"].get<std::string>()) ==
+			      c["expect"].get<std::string>(),
+		      "heat");
+	}
+	CHECK(!isHot(44.9) && isHot(45.0), "heat threshold");
 	std::printf("%d cases, %d failures\n", cases, failures);
 	return failures ? 1 : 0;
 }

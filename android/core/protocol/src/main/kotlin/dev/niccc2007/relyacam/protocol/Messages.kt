@@ -65,6 +65,12 @@ data class CamCaps(
     val lenses: List<Double>,
     val flash: Boolean,
     val modes: List<String>,
+    /** Brightness range and step in EV, `[min, max, step]`; empty when the camera has none. */
+    val ev: List<Double> = emptyList(),
+    /** White balance choices, a subset of [WhiteBalance.ALL], in that order. */
+    val wb: List<String> = emptyList(),
+    /** The camera can lock focus and exposure. */
+    val aeLock: Boolean = false,
 ) {
     val canZoom: Boolean get() = max > min + 1e-3
 
@@ -73,6 +79,7 @@ data class CamCaps(
         .put("min", round3(min)).put("max", round3(max))
         .put("lenses", JSONArray(lenses.map { round3(it) }))
         .put("flash", flash).put("modes", JSONArray(modes))
+        .put("ev", JSONArray(ev.map { round3(it) })).put("wb", JSONArray(wb)).put("aeLock", aeLock)
 
     companion object {
         fun fromJson(o: JSONObject) = CamCaps(
@@ -80,7 +87,35 @@ data class CamCaps(
             o.getDouble("min"), o.getDouble("max"),
             o.optJSONArray("lenses").doubles(), o.optBoolean("flash"),
             o.optJSONArray("modes").strings(),
+            o.optJSONArray("ev").doubles(), o.optJSONArray("wb").strings(), o.optBoolean("aeLock"),
         )
+    }
+}
+
+/** White balance choices (PROTOCOL.md, CAPS `wb`), in the order screens list them. */
+object WhiteBalance {
+    const val AUTO = "auto"
+    const val LOCK = "lock"
+    val ALL = listOf(AUTO, LOCK, "daylight", "cloudy", "indoor", "fluorescent")
+
+    fun label(k: String) = when (k) {
+        AUTO -> "Auto"; LOCK -> "Lock current"; "daylight" -> "Daylight"; "cloudy" -> "Cloudy"
+        "indoor" -> "Indoor"; "fluorescent" -> "Fluorescent"; else -> k
+    }
+}
+
+/** Where the rule-of-thirds grid is drawn (PROTOCOL.md, STATE `grid`). */
+data class Grid(val dock: Boolean = false, val phone: Boolean = false, val out: Boolean = false) {
+    fun toJson(): JSONObject = JSONObject().put("dock", dock).put("phone", phone).put("out", out)
+
+    /** This grid with [patch] applied (a CMD carries any subset of the keys). */
+    fun with(patch: Map<String, Boolean>) = Grid(
+        patch["dock"] ?: dock, patch["phone"] ?: phone, patch["out"] ?: out,
+    )
+
+    companion object {
+        val PLACES = listOf("dock", "phone", "out")
+        fun fromJson(o: JSONObject?) = if (o == null) Grid() else Grid(o.optBoolean("dock"), o.optBoolean("phone"), o.optBoolean("out"))
     }
 }
 
@@ -143,13 +178,21 @@ data class CamState(
     val agc: Boolean = false,
     /** Camera off: only the mic streams. */
     val micOnly: Boolean = false,
+    /** Focus and exposure locked; brightness in EV; white balance choice. */
+    val aeLock: Boolean = false,
+    val ev: Double = 0.0,
+    val wb: String = WhiteBalance.AUTO,
+    /** The photo size a snap request would send now ("4096x3072"), or empty when there's none. */
+    val snap: String = "",
+    val grid: Grid = Grid(),
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("cam", cam).put("zoom", round3(zoom)).put("torch", torch).put("mic", mic)
         .put("mode", mode).put("codec", codec).put("rot", rot).put("mirror", mirror)
         .put("flip", flip).put("lock", lock).put("temp", round1(temp)).put("battery", battery)
         .put("live", live).put("micIn", micIn).put("ns", ns).put("aec", aec).put("agc", agc)
-        .put("micOnly", micOnly)
+        .put("micOnly", micOnly).put("aeLock", aeLock).put("ev", round3(ev)).put("wb", wb)
+        .put("snap", snap).put("grid", grid.toJson())
 
     companion object {
         fun fromJson(o: JSONObject) = CamState(
@@ -157,7 +200,8 @@ data class CamState(
             o.optString("mode"), o.optString("codec", "h264"), o.optInt("rot"), o.optBoolean("mirror"),
             o.optBoolean("flip"), o.optBoolean("lock"), o.optDouble("temp", 0.0), o.optInt("battery", -1),
             o.optBoolean("live"), o.optString("micIn"), o.optBoolean("ns"), o.optBoolean("aec"),
-            o.optBoolean("agc"), o.optBoolean("micOnly"),
+            o.optBoolean("agc"), o.optBoolean("micOnly"), o.optBoolean("aeLock"), o.optDouble("ev", 0.0),
+            o.optString("wb", WhiteBalance.AUTO), o.optString("snap"), Grid.fromJson(o.optJSONObject("grid")),
         )
     }
 }
@@ -183,6 +227,13 @@ data class Cmd(
     val aec: Boolean? = null,
     val agc: Boolean? = null,
     val micOnly: Boolean? = null,
+    val aeLock: Boolean? = null,
+    val ev: Double? = null,
+    val wb: String? = null,
+    /** Take one photo and send it (SNAP). Never part of `restore`. */
+    val snap: Boolean = false,
+    /** Any subset of "dock", "phone", "out". */
+    val grid: Map<String, Boolean> = emptyMap(),
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         cam?.let { put("cam", it) }; zoom?.let { put("zoom", round3(it)) }
@@ -193,6 +244,9 @@ data class Cmd(
         if (zooms.isNotEmpty()) put("zooms", JSONObject(zooms.mapValues { round3(it.value) }))
         micIn?.let { put("micIn", it) }; ns?.let { put("ns", it) }; aec?.let { put("aec", it) }
         agc?.let { put("agc", it) }; micOnly?.let { put("micOnly", it) }
+        aeLock?.let { put("aeLock", it) }; ev?.let { put("ev", round3(it)) }; wb?.let { put("wb", it) }
+        if (snap) put("snap", true)
+        if (grid.isNotEmpty()) put("grid", JSONObject(grid))
     }
 
     companion object {
@@ -211,6 +265,12 @@ data class Cmd(
                 zooms = zs?.keys()?.asSequence()?.associateWith { zs.optDouble(it) }.orEmpty(),
                 micIn = o.optString("micIn").takeIf { o.has("micIn") && it.isNotEmpty() },
                 ns = b("ns"), aec = b("aec"), agc = b("agc"), micOnly = b("micOnly"),
+                aeLock = b("aeLock"), ev = if (o.has("ev")) o.optDouble("ev") else null,
+                wb = o.optString("wb").takeIf { o.has("wb") && it.isNotEmpty() },
+                snap = o.optBoolean("snap"),
+                grid = o.optJSONObject("grid")?.let { g ->
+                    Grid.PLACES.filter { g.has(it) }.associateWith { g.optBoolean(it) }
+                }.orEmpty(),
             )
         }
     }
@@ -254,6 +314,25 @@ data class Mode(val w: Int, val h: Int, val fps: Int) {
                 ?: parsed.minWithOrNull(compareBy({ it.w * it.h }, { it.fps }))
             return pick.toString()
         }
+    }
+}
+
+/** The heat warning, derived the same way on both sides (PROTOCOL.md, "Heat"). */
+object Heat {
+    const val HOT_C = 45.0
+
+    fun hot(temp: Double) = temp >= HOT_C
+
+    /**
+     * The mode to suggest while hot: the default mode when [current] is above it, else the next
+     * smaller one the camera has. Null when nothing smaller exists.
+     */
+    fun suggest(modes: List<String>, current: String): String? {
+        val cur = Mode.parse(current) ?: return null
+        val cost = { m: Mode -> m.w.toLong() * m.h * m.fps }
+        val parsed = modes.mapNotNull { Mode.parse(it) }
+        Mode.default(modes)?.let { Mode.parse(it) }?.takeIf { cost(it) < cost(cur) }?.let { return it.toString() }
+        return parsed.filter { cost(it) < cost(cur) }.maxByOrNull { cost(it) }?.toString()
     }
 }
 

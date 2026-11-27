@@ -21,6 +21,7 @@ object Type {
     const val VIDEO = 0x11
     const val ACONF = 0x12
     const val AUDIO = 0x13
+    const val SNAP = 0x14
 }
 
 const val PROTOCOL_VERSION = 1

@@ -125,10 +125,14 @@ to bottom:
 exposure, White balance ▸; Snapshot to PC), Mic ▸ (Mic on; while on: Input ▸, Clean-up ▸, Every
 scene, Use in other apps with "...and be Windows' default mic" and Remove VB-Cable..., or Use in
 other apps... to install it; Mic only), Overlays ▸ Grid ▸ (Dock, Phone, OBS output), Gestures ▸ (On
-for this phone, the detection overlay in the dock and on the phone, on the OBS output, Open the
-gestures editor..., and the app's status), then Show
+for this phone, the detection overlay and the face map, each in the dock and on the phone or on
+the OBS output, Open the gestures editor..., and the app's status), then Show
 preview and Connect a phone over USB. Every scene and Use in other apps are about the OBS
 source, so they stay while the phone is offline.
+
+**Menus stay open** on a tick or a pick: the owner never has to reopen a submenu. An open menu
+refills from live state, and a click reads the state at that moment, not the one the menu opened
+with. Items that open a window or do a one-off still close it.
 
 On the phone, **Setup** (the gear, or a tap on the status line) is a sheet over the picture on
 `sheet`: Mic (inputs and clean-up only while on), Video (quality, the codec when there's a

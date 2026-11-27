@@ -392,6 +392,17 @@ void Gestures::setDetection(bool dock, bool output)
 	emit changed();
 }
 
+void Gestures::setFaceMap(bool dock, bool output)
+{
+	if (dock != faceDock_)
+		send(msg::Cmd, json{{"overlay", {{"which", "face"}, {"place", "preview"}, {"on", dock}}}}.dump());
+	if (output != faceOut_)
+		send(msg::Cmd, json{{"overlay", {{"which", "face"}, {"place", "output"}, {"on", output}}}}.dump());
+	faceDock_ = dock;
+	faceOut_ = output;
+	emit changed();
+}
+
 void Gestures::openEditor(const std::string &device)
 {
 	if (hello_) {
@@ -576,6 +587,10 @@ void Gestures::handle(uint8_t type, const std::string &payload)
 			detDock_ = j["overlay"]["detection"].value("dock", false);
 			detOut_ = j["overlay"]["detection"].value("output", false);
 		}
+		if (j.contains("overlay") && j["overlay"].contains("face")) {
+			faceDock_ = j["overlay"]["face"].value("dock", false);
+			faceOut_ = j["overlay"]["face"].value("output", false);
+		}
 		pushLibrary();
 		emit changed();
 		break;
@@ -589,7 +604,7 @@ void Gestures::handle(uint8_t type, const std::string &payload)
 	case msg::Det: {
 		const std::string dev = j.value("device", "");
 		// The phone's screen is the other "preview" place: it draws the same hands (PROTOCOL.md, GDET).
-		if (detDock_ && on(dev)) {
+		if ((detDock_ || faceDock_) && on(dev)) {
 			json p = j;
 			p.erase("device");
 			Hub::get().sendGesture(dev, Type::GDet, p.dump());
@@ -598,6 +613,14 @@ void Gestures::handle(uint8_t type, const std::string &payload)
 		auto &o = overlays_[dev];
 		o.hands.clear();
 		o.labels.clear();
+		o.face.clear();
+		if (j.contains("face") && j["face"].is_array())
+			for (auto &l : j["face"]) {
+				std::vector<QPointF> pts;
+				for (size_t i = 0; i + 1 < l.size(); i += 2)
+					pts.emplace_back(l[i].get<double>(), l[i + 1].get<double>());
+				o.face.push_back(std::move(pts));
+			}
 		if (j.contains("hands") && j["hands"].is_array())
 			for (auto &h : j["hands"]) {
 				std::vector<QPointF> pts;

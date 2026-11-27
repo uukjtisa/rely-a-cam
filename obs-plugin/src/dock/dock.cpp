@@ -143,6 +143,19 @@ static void paintGestures(QPainter &p, const QRectF &box, const GestureOverlay &
 	auto at = [&box](QPointF f) { return QPointF(box.x() + f.x() * box.width(), box.y() + f.y() * box.height()); };
 	p.save();
 	p.setRenderHint(QPainter::Antialiasing);
+	{
+		QPen line(kNoteGreen, 1.6 * s);
+		line.setCapStyle(Qt::RoundCap);
+		line.setJoinStyle(Qt::RoundJoin);
+		p.setPen(line);
+		p.setBrush(Qt::NoBrush);
+		for (const auto &l : g.face) {
+			QPolygonF poly;
+			for (const auto &pt : l)
+				poly << at(pt);
+			p.drawPolyline(poly);
+		}
+	}
 	for (const auto &h : g.hands) {
 		if (h.size() != 21)
 			continue;
@@ -970,6 +983,12 @@ void PhoneDock::styleTools()
 	styling_ = false;
 }
 
+State PhoneDock::liveState() const
+{
+	const PhoneView *v = current();
+	return v ? v->state : State{};
+}
+
 const PhoneView *PhoneDock::current() const
 {
 	for (auto &p : phones_)
@@ -1020,6 +1039,8 @@ void PhoneDock::rebuildPhones()
 
 void PhoneDock::refresh()
 {
+	if (openMenu_)
+		QTimer::singleShot(0, this, &PhoneDock::refreshMenu);
 	const size_t before = std::count_if(phones_.begin(), phones_.end(), [](const PhoneView &v) { return v.connected; });
 	phones_ = Hub::get().phones();
 	const size_t now = std::count_if(phones_.begin(), phones_.end(), [](const PhoneView &v) { return v.connected; });
@@ -1201,13 +1222,126 @@ static QAction *addItem(QMenu *m, const QString &text, bool checkable, bool chec
 	return a;
 }
 
+namespace {
+
+// Ticking or picking keeps the menu open; it refills from live state, so a pick-one list's checks
+// follow what the phone reports.
+class KeepOpen : public QObject {
+public:
+	KeepOpen(QObject *parent, std::function<void()> after) : QObject(parent), after_(std::move(after)) {}
+
+protected:
+	bool eventFilter(QObject *o, QEvent *e) override
+	{
+		auto *menu = qobject_cast<QMenu *>(o);
+		if (!menu)
+			return false;
+		const bool click = e->type() == QEvent::MouseButtonRelease &&
+				   static_cast<QMouseEvent *>(e)->button() == Qt::LeftButton;
+		const bool key = e->type() == QEvent::KeyPress && (static_cast<QKeyEvent *>(e)->key() == Qt::Key_Return ||
+								    static_cast<QKeyEvent *>(e)->key() == Qt::Key_Enter ||
+								    static_cast<QKeyEvent *>(e)->key() == Qt::Key_Space);
+		if (!click && !key)
+			return false;
+		QAction *a = menu->activeAction();
+		if (!a || !a->isCheckable() || !a->isEnabled() || a->menu())
+			return false;
+		if (click && !menu->actionGeometry(a).contains(static_cast<QMouseEvent *>(e)->position().toPoint()))
+			return false;
+		a->trigger();
+		after_();
+		return true;
+	}
+
+private:
+	std::function<void()> after_;
+};
+
+QString menuSignature(const QMenu *m)
+{
+	QString s;
+	for (const QAction *a : m->actions()) {
+		s += a->text();
+		s += a->isChecked() ? QLatin1Char('1') : QLatin1Char('0');
+		s += a->isEnabled() ? QLatin1Char('1') : QLatin1Char('0');
+		if (a->menu())
+			s += QLatin1Char('{') + menuSignature(a->menu()) + QLatin1Char('}');
+		s += QLatin1Char(';');
+	}
+	return s;
+}
+
+} // namespace
+
 void PhoneDock::showMenu(QPoint global)
 {
 	if (!current())
 		return;
 	QMenu menu(this);
 	fillMenu(&menu);
+	keepOpen(&menu);
+	openMenu_ = &menu;
+	menuDirty_ = false;
 	menu.exec(global);
+	openMenu_ = nullptr;
+}
+
+void PhoneDock::keepOpen(QMenu *menu)
+{
+	auto *f = new KeepOpen(menu, [this] {
+		// Local settings change at once; the phone's arrive with its next state (refreshMenu).
+		menuDirty_ = true;
+		QTimer::singleShot(60, this, &PhoneDock::refreshMenu);
+	});
+	menu->installEventFilter(f);
+	for (QMenu *sub : menu->findChildren<QMenu *>())
+		sub->installEventFilter(f);
+}
+
+void PhoneDock::refreshMenu()
+{
+	if (!openMenu_ || !openMenu_->isVisible())
+		return;
+	QMenu scratch;
+	fillMenu(&scratch);
+	if (menuDirty_ || menuSignature(&scratch) != menuSignature(openMenu_))
+		rebuildOpenMenu();
+}
+
+void PhoneDock::rebuildOpenMenu()
+{
+	QMenu *top = openMenu_;
+	if (!top || !top->isVisible())
+		return;
+	menuDirty_ = false;
+	// Which submenus are open, by title, to open them again.
+	QStringList path;
+	for (QMenu *cur = top; cur;) {
+		QAction *a = cur->activeAction();
+		if (!a || !a->menu() || !a->menu()->isVisible())
+			break;
+		path << a->text();
+		cur = a->menu();
+	}
+	const auto old = top->findChildren<QMenu *>();
+	for (QMenu *c : old)
+		c->hide();
+	top->clear();
+	for (QMenu *c : old)
+		c->deleteLater();
+	fillMenu(top);
+	keepOpen(top);
+	QMenu *cur = top;
+	for (const QString &t : path) {
+		QAction *hit = nullptr;
+		for (QAction *a : cur->actions())
+			if (a->menu() && a->text() == t)
+				hit = a;
+		if (!hit || !hit->isEnabled())
+			break;
+		cur->setActiveAction(hit);   // opens its submenu at once
+		cur = hit->menu();
+	}
 }
 
 void PhoneDock::fillMenu(QMenu *m)
@@ -1251,12 +1385,12 @@ void PhoneDock::fillMenu(QMenu *m)
 	// Picture.
 	QMenu *pic = m->addMenu("Picture");
 	pic->setEnabled(live && !st.micOnly);
-	addItem(pic, "Mirror", true, st.mirror, true, [this, on = !st.mirror] { cmd(json{{"mirror", on}}.dump()); });
-	addItem(pic, "Flip", true, st.flip, true, [this, on = !st.flip] { cmd(json{{"flip", on}}.dump()); });
-	addItem(pic, "Lock turn", true, st.lock, true, [this, on = !st.lock] { cmd(json{{"lock", on}}.dump()); });
+	addItem(pic, "Mirror", true, st.mirror, true, [this] { cmd(json{{"mirror", !liveState().mirror}}.dump()); });
+	addItem(pic, "Flip", true, st.flip, true, [this] { cmd(json{{"flip", !liveState().flip}}.dump()); });
+	addItem(pic, "Lock turn", true, st.lock, true, [this] { cmd(json{{"lock", !liveState().lock}}.dump()); });
 	pic->addSeparator();
 	QAction *ae = addItem(pic, "Lock focus + exposure", true, st.aeLock, c && c->aeLock,
-			      [this, on = !st.aeLock] { cmd(json{{"aeLock", on}}.dump()); });
+			      [this] { cmd(json{{"aeLock", !liveState().aeLock}}.dump()); });
 	if (!(c && c->aeLock))
 		ae->setToolTip("This camera can't lock focus and exposure.");
 	if (c && !c->wb.empty()) {
@@ -1276,7 +1410,7 @@ void PhoneDock::fillMenu(QMenu *m)
 	obs_source_t *src = Hub::get().micSource(view.device);
 	const bool micOk = live && view.caps.mic;
 	addItem(mic, live && !view.caps.mic ? "Mic on (not allowed on the phone)" : "Mic on", true, live && st.mic, micOk,
-		[this, on = !st.mic] { cmd(json{{"mic", on}}.dump()); });
+		[this] { cmd(json{{"mic", !liveState().mic}}.dump()); });
 	if (!live || st.mic) {
 		if (live && !view.caps.mics.empty()) {
 			QMenu *in = mic->addMenu("Input");
@@ -1296,18 +1430,37 @@ void PhoneDock::fillMenu(QMenu *m)
 			for (const Fx &f : fx)
 				if (view.caps.hasClean(f.key)) {
 					const std::string k = f.key;
-					addItem(clean, f.label, true, f.on, true, [this, k, on = !f.on] { cmd(json{{k, on}}.dump()); });
+					addItem(clean, f.label, true, f.on, true, [this, k] {
+							const State s = liveState();
+							const bool cur = k == "ns" ? s.ns : k == "aec" ? s.aec : s.agc;
+							cmd(json{{k, !cur}}.dump());
+						});
 				}
 		}
 		const bool every = routing::isEveryScene(src);
-		addItem(mic, "Every scene", true, every, src != nullptr, [this, on = !every] { setEveryScene(on); });
+		addItem(mic, "Every scene", true, every, src != nullptr, [this] {
+			obs_source_t *s = Hub::get().micSource(selected_);
+			const bool cur = routing::isEveryScene(s);
+			obs_source_release(s);
+			setEveryScene(!cur);
+		});
 		mic->addSeparator();
 		if (cable::installed()) {
 			const bool apps = src && routing::inOtherApps(src);
-			addItem(mic, "Use in other apps", true, apps, src != nullptr, [this, on = !apps] { setInOtherApps(on); });
+			addItem(mic, "Use in other apps", true, apps, src != nullptr, [this] {
+				obs_source_t *s = Hub::get().micSource(selected_);
+				const bool cur = s && routing::inOtherApps(s);
+				obs_source_release(s);
+				setInOtherApps(!cur);
+			});
 			if (apps) {
 				const bool def = routing::isDefaultMic(src);
-				addItem(mic, "...and be Windows' default mic", true, def, true, [this, on = !def] { setDefaultMic(on); });
+				addItem(mic, "...and be Windows' default mic", true, def, true, [this] {
+					obs_source_t *s = Hub::get().micSource(selected_);
+					const bool cur = routing::isDefaultMic(s);
+					obs_source_release(s);
+					setDefaultMic(!cur);
+				});
 			}
 			addItem(mic, "Remove VB-Cable...", false, false, true, [this] { removeCable(); });
 		} else {
@@ -1315,7 +1468,7 @@ void PhoneDock::fillMenu(QMenu *m)
 		}
 		mic->addSeparator();
 	}
-	addItem(mic, "Mic only (camera off)", true, st.micOnly, live, [this, on = !st.micOnly] { cmd(json{{"micOnly", on}}.dump()); });
+	addItem(mic, "Mic only (camera off)", true, st.micOnly, live, [this] { cmd(json{{"micOnly", !liveState().micOnly}}.dump()); });
 	obs_source_release(src);
 
 	// Gestures: the Rely-A-Cam-Gestures app, attached to this phone.
@@ -1325,13 +1478,17 @@ void PhoneDock::fillMenu(QMenu *m)
 		QMenu *gm = m->addMenu("Gestures");
 		gm->setEnabled(live);
 		const bool on = g.on(dev);
-		addItem(gm, "On for this phone", true, on, g.installed(), [dev, on] { Gestures::get().setOn(dev, !on); });
+		addItem(gm, "On for this phone", true, on, g.installed(), [dev] { Gestures::get().setOn(dev, !Gestures::get().on(dev)); });
 		gm->addSeparator();
 		const bool linked = on && g.connected();
 		addItem(gm, "Detection overlay in the dock and on the phone", true, g.detectionDock(), linked,
 			[] { Gestures::get().setDetection(!Gestures::get().detectionDock(), Gestures::get().detectionOutput()); });
 		addItem(gm, "Detection overlay on the OBS output", true, g.detectionOutput(), linked,
 			[] { Gestures::get().setDetection(Gestures::get().detectionDock(), !Gestures::get().detectionOutput()); });
+		addItem(gm, "Face map in the dock and on the phone", true, g.faceDock(), linked,
+			[] { Gestures::get().setFaceMap(!Gestures::get().faceDock(), Gestures::get().faceOutput()); });
+		addItem(gm, "Face map on the OBS output", true, g.faceOutput(), linked,
+			[] { Gestures::get().setFaceMap(Gestures::get().faceDock(), !Gestures::get().faceOutput()); });
 		addItem(gm, "Open the gestures editor...", false, false, g.installed(), [dev] { Gestures::get().openEditor(dev); });
 		gm->addSeparator();
 		addItem(gm, g.status(), false, false, false, [] {});
@@ -1345,7 +1502,11 @@ void PhoneDock::fillMenu(QMenu *m)
 	const bool gridOn[] = {st.grid.dock, st.grid.phone, st.grid.out};
 	for (int i = 0; i < 3; i++) {
 		const std::string k = places[i].first;
-		addItem(grid, places[i].second, true, gridOn[i], true, [this, k, on = !gridOn[i]] { cmd(json{{"grid", {{k, on}}}}.dump()); });
+		addItem(grid, places[i].second, true, gridOn[i], true, [this, k, i] {
+			const State s = liveState();
+			const bool cur = i == 0 ? s.grid.dock : i == 1 ? s.grid.phone : s.grid.out;
+			cmd(json{{"grid", {{k, !cur}}}}.dump());
+		});
 	}
 
 	m->addSeparator();

@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -396,6 +397,20 @@ fun GestureMarks(det: GestureDet, modifier: Modifier = Modifier, mapper: (w: Flo
     Canvas(modifier.fillMaxSize()) {
         val at = mapper(size.width, size.height)
         val u = density
+        // The face map's lines: the jaw, brows, eyes, lips and nose.
+        for (l in det.face) {
+            if (l.size < 4) continue
+            val path = Path()
+            val first = at(l[0], l[1])
+            path.moveTo(first.x, first.y)
+            var i = 2
+            while (i + 1 < l.size) {
+                val pt = at(l[i], l[i + 1])
+                path.lineTo(pt.x, pt.y)
+                i += 2
+            }
+            drawPath(path, GESTURE_SKELETON, style = Stroke(width = 1.6f * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
         for (hand in det.hands) {
             if (hand.size < 42) continue
             val pts = List(21) { i -> at(hand[2 * i], hand[2 * i + 1]) }

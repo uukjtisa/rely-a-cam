@@ -100,12 +100,16 @@ GLIB, PC to phone:
 
 ```
 {"installed":true, "on":true, "linked":true, "status":"Gestures ready (GPU)",
- "gestures":[{"id":"builtin:thumbs_up","name":"Thumbs up","on":true,"mine":false,"action":"Torch"}],
- "memes":[{"id":"m1","name":"vine boom","kind":"Video","place":"head","volume":80,"sound":true}]}
+ "gestures":[{"id":"sign:Pointing_Up","name":"Pointing up","on":true,"mine":false,"action":"Follow face","control":"Follow face"}],
+ "memes":[{"id":"m1","name":"vine boom","kind":"Video","place":"head","volume":80,"sound":true}],
+ "controls":[{"id":"follow.face","label":"Follow face","group":"Framing","on":true,"move":false,
+              "how":"tap: on or off...","gesture":"☝ Pointing up"}]}
 ```
 
 `linked` is false until the gestures app is running; the lists are empty until then. `place` is
 `head` (follows the face), `full` (the whole picture) or `spot` (where it was put in the editor).
+`controls` are the app's fixed jobs, in the order its Controls tab lists them. A `move` is a pinch
+move with no gesture. A gesture a control uses carries `control` (the control's label).
 
 GSET, phone to PC, one of:
 
@@ -113,7 +117,8 @@ GSET, phone to PC, one of:
 |---|---|
 | `{"on":true}` | gestures on or off for this phone (the plugin starts the app when needed) |
 | `{"openEditor":true}` | opens the gestures app's window on the PC, showing this phone |
-| `{"gesture":{"id":..,"on":false}}` | one gesture on or off |
+| `{"gesture":{"id":..,"on":false}}` | one reaction on or off |
+| `{"control":{"id":..,"on":false}}` | one control on or off (turning one on may turn off a conflicting one) |
 | `{"meme":{"id":..,"place":"full","volume":60}}` | where a meme shows, its volume (either key) |
 | `{"removeMeme":id}` | removes a meme |
 | `{"record":id}` | records a take of one of your gestures, from this phone's camera (3, 2, 1, then 2 s) |
@@ -122,15 +127,19 @@ GSET, phone to PC, one of:
 Every edit is done on the PC, which sends GLIB back, so the phone shows what the PC has rather
 than what it asked for.
 
-GDET, PC to phone, while the dock's "Detection overlay in the dock and on the phone" is on:
+GDET, PC to phone, while the dock's "Detection overlay..." or "Face map in the dock and on the
+phone" is on:
 
 ```
-{"hands":[[x0,y0, x1,y1, ... x20,y20]], "g":[{"n":"Thumbs up","s":"armed","x":0.42,"y":0.31}]}
+{"hands":[[x0,y0, x1,y1, ... x20,y20]], "g":[{"n":"Thumbs up","s":"armed","a":1,"c":"Thumbs up","x":0.42,"y":0.31}],
+ "face":[[x0,y0, x1,y1, ...], ...]}
 ```
 
 Points are fractions of the upright picture OBS shows (after `rot`, mirror and flip), 21 per hand
 in MediaPipe's order. `s` is `""`, `"armed"` (held long enough) or `"waiting"` (wants the confirm
-sign). The phone maps each point back through the stream's turn to its own preview, and clears
+sign). `face` (only while the face map is on) is a list of polylines: the jaw, lips, eyes, brows,
+nose and pupils; the face map's own label (the face gesture being made) comes in `g`. The phone
+maps each point back through the stream's turn to its own preview, and clears
 the overlay half a second after the last GDET.
 
 ## Capability report (CAPS)

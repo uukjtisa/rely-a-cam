@@ -44,6 +44,7 @@ struct GestureOverlay {
 		QString confirm;       // the confirm sign's name, for "waiting"
 	};
 	std::vector<Label> labels;
+	std::vector<std::vector<QPointF>> face;   // the face map's lines, fractions of the picture
 };
 
 class Gestures : public QObject {
@@ -66,6 +67,9 @@ public:
 	bool detectionDock() const { return detDock_; }
 	bool detectionOutput() const { return detOut_; }
 	void setDetection(bool dock, bool output);
+	bool faceDock() const { return faceDock_; }
+	bool faceOutput() const { return faceOut_; }
+	void setFaceMap(bool dock, bool output);
 	void openEditor(const std::string &device);
 	GestureOverlay overlay(const std::string &device) const;
 	/** An edit or a file from a phone's Library screen (UI thread). */
@@ -113,7 +117,7 @@ private:
 	std::string buf_;
 	bool started_ = false, hello_ = false;
 	std::atomic<bool> connected_{false};
-	bool ready_ = false, detDock_ = false, detOut_ = false;
+	bool ready_ = false, detDock_ = false, detOut_ = false, faceDock_ = false, faceOut_ = false;
 	QString device_, error_, appVersion_;
 	int64_t launchedAt_ = 0, triedAt_ = 0;
 	int launches_ = 0;

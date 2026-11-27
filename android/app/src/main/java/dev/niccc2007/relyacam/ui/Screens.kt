@@ -671,22 +671,49 @@ private fun GesturesSheet(g: GestureLib, close: () -> Unit) {
                 SheetNote("The library shows here once the gestures app on the PC is running (turn gestures on).")
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SheetChip("Gestures", tab == 0) { tab = 0 }
-                    SheetChip("Memes", tab == 1) { tab = 1 }
+                    SheetChip("Controls", tab == 0) { tab = 0 }
+                    SheetChip("Reactions", tab == 1) { tab = 1 }
+                    SheetChip("Memes", tab == 2) { tab = 2 }
                 }
-                if (tab == 0) GestureList(g) else MemeList(g) { pick.launch(arrayOf("image/*", "video/*")) }
+                when (tab) {
+                    0 -> ControlList(g)
+                    1 -> GestureList(g)
+                    else -> MemeList(g) { pick.launch(arrayOf("image/*", "video/*")) }
+                }
             }
         }
     }
+}
+
+/** The PC's Controls tab: each job on or off here; its gesture is picked on the PC. */
+@Composable
+private fun ControlList(g: GestureLib) {
+    var last = ""
+    g.controls.forEach { c ->
+        if (c.group != last) {
+            last = c.group
+            SheetNote(c.group)
+        }
+        SheetRow(c.label, on = c.on, onClick = {
+            Engine.gestureEdit(JSONObject().put("control", JSONObject().put("id", c.id).put("on", !c.on)))
+        }) {
+            SheetNote(if (c.move) "pinch" else c.gesture.ifEmpty { "no gesture" })
+        }
+    }
+    if (g.controls.isEmpty()) SheetNote("Update the gestures app on the PC to see its controls.")
+    SheetNote("Pinch zoom: pinch and hold still, push toward the camera to zoom in, pull back to zoom out.")
 }
 
 @Composable
 private fun GestureList(g: GestureLib) {
     g.gestures.forEach { item ->
         SheetRow(item.name, on = item.on, onClick = {
-            Engine.gestureEdit(JSONObject().put("gesture", JSONObject().put("id", item.id).put("on", !item.on)))
+            // A control's gesture is switched with its control, on the Controls tab.
+            if (item.control.isEmpty()) {
+                Engine.gestureEdit(JSONObject().put("gesture", JSONObject().put("id", item.id).put("on", !item.on)))
+            }
         }) {
-            SheetNote(item.action.ifEmpty { "no action yet" })
+            SheetNote(if (item.control.isNotEmpty()) "runs ${item.control}" else item.action.ifEmpty { "no meme yet" })
             if (item.mine) SheetChip("Record", false) { Engine.gestureEdit(JSONObject().put("record", item.id)) }
         }
     }

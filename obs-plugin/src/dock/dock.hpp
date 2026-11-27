@@ -16,6 +16,7 @@
 
 #include <QElapsedTimer>
 #include <QImage>
+#include <QPointer>
 #include <QWidget>
 
 #include <functional>
@@ -185,12 +186,18 @@ private:
 	void cmd(const std::string &json);
 	void showMenu(QPoint global);
 	void fillMenu(QMenu *menu);
+	// The open menu stays open on a toggle and refills itself, from live state, when what it shows
+	// changes; the submenu that was open opens again.
+	void keepOpen(QMenu *menu);
+	void refreshMenu();
+	void rebuildOpenMenu();
 	void setEveryScene(bool on);
 	void setInOtherApps(bool on);
 	void setDefaultMic(bool on);
 	void installCable();
 	void removeCable();
 	const PhoneView *current() const;
+	State liveState() const;   // the selected phone's state now (a menu may have been open a while)
 
 	std::string selected_;
 	std::vector<PhoneView> phones_;
@@ -238,6 +245,8 @@ private:
 	double pendingSend_ = 0;
 	QElapsedTimer lastSent_;
 	bool previewOn_ = true;
+	QPointer<QMenu> openMenu_;
+	bool menuDirty_ = false;
 	bool introduced_ = false;
 	std::string updateTag_, updateUrl_;
 };

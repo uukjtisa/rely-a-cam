@@ -301,7 +301,7 @@ data class Welcome(
  * GDET: what the gestures app sees, to draw over the phone's picture. Points are fractions of the
  * upright picture OBS shows (after mirror and flip), 21 per hand.
  */
-data class GestureDet(val hands: List<FloatArray>, val labels: List<Label>) {
+data class GestureDet(val hands: List<FloatArray>, val labels: List<Label>, val face: List<FloatArray> = emptyList()) {
     /** [armed] 0..1 is how long it's been held; [confirm] names the confirm sign while [state] is "waiting". */
     data class Label(val name: String, val state: String, val x: Float, val y: Float, val armed: Float = 0f, val confirm: String = "")
 
@@ -309,23 +309,36 @@ data class GestureDet(val hands: List<FloatArray>, val labels: List<Label>) {
         fun fromJson(o: JSONObject): GestureDet {
             val hs = o.optJSONArray("hands")
             val gs = o.optJSONArray("g")
+            val fs = o.optJSONArray("face")
+            fun lines(a: org.json.JSONArray?) = (0 until (a?.length() ?: 0)).mapNotNull { i -> a!!.optJSONArray(i) }.map { l ->
+                FloatArray(l.length()) { k -> l.optDouble(k).toFloat() }
+            }
             return GestureDet(
-                (0 until (hs?.length() ?: 0)).mapNotNull { i -> hs!!.optJSONArray(i) }.map { a ->
-                    FloatArray(a.length()) { k -> a.optDouble(k).toFloat() }
-                },
+                lines(hs),
                 (0 until (gs?.length() ?: 0)).mapNotNull { i -> gs!!.optJSONObject(i) }.map {
                     Label(
                         it.optString("n"), it.optString("s"), it.optDouble("x", 0.5).toFloat(), it.optDouble("y", 0.5).toFloat(),
                         it.optDouble("a", 0.0).toFloat(), it.optString("c"),
                     )
                 },
+                lines(fs),
             )
         }
     }
 }
 
 /** One gesture in the PC's library, as the Library sheet lists it. */
-data class GestureItem(val id: String, val name: String, val on: Boolean, val mine: Boolean, val action: String)
+data class GestureItem(
+    val id: String, val name: String, val on: Boolean, val mine: Boolean, val action: String,
+    /** The control this gesture runs, or empty: then the gesture follows that control's switch. */
+    val control: String = "",
+)
+
+/** One job on the PC's Controls tab. [move] ones are pinch moves; the others have a [gesture]. */
+data class ControlItem(
+    val id: String, val label: String, val group: String, val on: Boolean, val move: Boolean, val how: String,
+    val gesture: String,
+)
 
 /** One meme: where it shows (head, full, spot) and its volume. */
 data class MemeItem(val id: String, val name: String, val kind: String, val place: String, val volume: Int, val sound: Boolean)
@@ -338,19 +351,30 @@ data class GestureLib(
     val status: String = "",
     val gestures: List<GestureItem> = emptyList(),
     val memes: List<MemeItem> = emptyList(),
+    val controls: List<ControlItem> = emptyList(),
 ) {
     companion object {
         fun fromJson(o: JSONObject): GestureLib {
             val gs = o.optJSONArray("gestures")
             val ms = o.optJSONArray("memes")
+            val cs = o.optJSONArray("controls")
             return GestureLib(
                 o.optBoolean("installed"), o.optBoolean("on"), o.optBoolean("linked"), o.optString("status"),
                 (0 until (gs?.length() ?: 0)).mapNotNull { i -> gs!!.optJSONObject(i) }.map {
-                    GestureItem(it.optString("id"), it.optString("name"), it.optBoolean("on"), it.optBoolean("mine"), it.optString("action"))
+                    GestureItem(
+                        it.optString("id"), it.optString("name"), it.optBoolean("on"), it.optBoolean("mine"), it.optString("action"),
+                        it.optString("control"),
+                    )
                 },
                 (0 until (ms?.length() ?: 0)).mapNotNull { i -> ms!!.optJSONObject(i) }.map {
                     MemeItem(it.optString("id"), it.optString("name"), it.optString("kind"), it.optString("place", "head"),
                         it.optInt("volume", 80), it.optBoolean("sound"))
+                },
+                (0 until (cs?.length() ?: 0)).mapNotNull { i -> cs!!.optJSONObject(i) }.map {
+                    ControlItem(
+                        it.optString("id"), it.optString("label"), it.optString("group"), it.optBoolean("on"),
+                        it.optBoolean("move"), it.optString("how"), it.optString("gesture"),
+                    )
                 },
             )
         }

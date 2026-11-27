@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "dock.hpp"
 
+#include "../audio/routing.hpp"
 #include "../sys/system.hpp"
 #include "../third_party/qrcodegen/qrcodegen.hpp"
 
@@ -9,7 +10,9 @@
 #include <util/platform.h>
 
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDockWidget>
+#include <QGridLayout>
 #include <QDir>
 #include <QFile>
 #include <QGestureEvent>
@@ -18,6 +21,7 @@
 #include <QLabel>
 #include <QNativeGestureEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPinchGesture>
 #include <QPointer>
 #include <QPushButton>
@@ -25,6 +29,7 @@
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -229,6 +234,63 @@ void PhoneDock::introduceOnce()
 	reveal(d->phones_.empty());
 }
 
+// ---- mic meter -----------------------------------------------------------------------------
+
+MeterWidget::MeterWidget(QWidget *parent) : QWidget(parent)
+{
+	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	setToolTip("The phone's mic level as it arrives. CLIP lights when it's too loud: move the phone back or turn on Auto gain.");
+}
+
+void MeterWidget::setLevel(float peak, bool clip)
+{
+	if (std::fabs(peak - peak_) < 0.004f && clip == clip_)
+		return;
+	peak_ = peak;
+	clip_ = clip;
+	update();
+}
+
+void MeterWidget::paintEvent(QPaintEvent *)
+{
+	QPainter p(this);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QPalette &pal = palette();
+	const int clipW = 34;
+	const QRectF track(0, height() / 2.0 - 3, width() - clipW - 6, 6);
+	p.setPen(Qt::NoPen);
+	p.setBrush(pal.color(QPalette::Base));
+	p.drawRoundedRect(track, 3, 3);
+	// OBS's own mixer zones: green to -9 dB, yellow to -3 dB, red above (as fractions of full scale).
+	struct Zone {
+		double to;
+		QColor c;
+	};
+	const Zone zones[] = {{0.65, QColor(0x25, 0xA2, 0x31)}, {0.85, QColor(0xE5, 0xAF, 0x24)}, {1.0, QColor(0xC0, 0x1C, 0x37)}};
+	const double w = track.width() * std::clamp(double(peak_), 0.0, 1.0);
+	double from = 0;
+	p.save();
+	QPainterPath clipPath;
+	clipPath.addRoundedRect(track, 3, 3);
+	p.setClipPath(clipPath);
+	for (const Zone &z : zones) {
+		const double x0 = track.width() * from, x1 = std::min(w, track.width() * z.to);
+		if (x1 > x0)
+			p.fillRect(QRectF(track.left() + x0, track.top(), x1 - x0, track.height()), z.c);
+		from = z.to;
+	}
+	p.restore();
+	const QRectF tag(width() - clipW, height() / 2.0 - 7, clipW, 14);
+	p.setBrush(clip_ ? QColor(0xC0, 0x1C, 0x37) : pal.color(QPalette::Base));
+	p.drawRoundedRect(tag, 3, 3);
+	QFont f = font();
+	f.setPixelSize(9);
+	f.setBold(true);
+	p.setFont(f);
+	p.setPen(clip_ ? QColor(Qt::white) : pal.color(QPalette::PlaceholderText));
+	p.drawText(tag, Qt::AlignCenter, "CLIP");
+}
+
 static QToolButton *toggle(const QString &text, const QString &tip)
 {
 	auto *b = new QToolButton();
@@ -316,10 +378,8 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	camBox_ = new QComboBox();
 	camBox_->setToolTip("Camera");
 	torchBtn_ = toggle("Torch", "Torch on the phone");
-	micBtn_ = toggle("Mic", "Send the phone's microphone to OBS");
 	r1->addWidget(camBox_, 1);
 	r1->addWidget(torchBtn_);
-	r1->addWidget(micBtn_);
 	cl->addLayout(r1);
 
 	auto *r2 = new QHBoxLayout();
@@ -337,6 +397,48 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	r2->addWidget(lockBtn_);
 	cl->addLayout(r2);
 	root->addWidget(controls_);
+
+	// Mic: a block of its own, because Every scene and Use in other apps are about the OBS
+	// source and still work while the phone is offline (docs/mock.html, round 4).
+	micPanel_ = new QWidget();
+	auto *mg = new QGridLayout(micPanel_);
+	mg->setContentsMargins(0, 0, 0, 0);
+	mg->setHorizontalSpacing(6);
+	mg->setVerticalSpacing(6);
+	mg->setColumnStretch(1, 1);
+	micBtn_ = toggle("Mic", "Mute or unmute this phone's mic");
+	meter_ = new MeterWidget();
+	auto *m0 = new QHBoxLayout();
+	m0->addWidget(micBtn_);
+	m0->addWidget(meter_, 1);
+	mg->addWidget(new QLabel("Mic"), 0, 0);
+	mg->addLayout(m0, 0, 1);
+	inputBox_ = new QComboBox();
+	inputBox_->setToolTip("Which of the phone's mics to use. A wired, USB or Bluetooth mic shows up here once it's connected to the phone.");
+	mg->addWidget(new QLabel("Input"), 1, 0);
+	mg->addWidget(inputBox_, 1, 1);
+	nsBtn_ = toggle("Noise", "Noise suppression: cuts steady hiss and hum");
+	aecBtn_ = toggle("Echo", "Echo cancellation: removes sound from a speaker near the phone");
+	agcBtn_ = toggle("Auto gain", "Automatic gain: evens out loud and quiet, and keeps it from clipping");
+	auto *m2 = new QHBoxLayout();
+	m2->addWidget(nsBtn_);
+	m2->addWidget(aecBtn_);
+	m2->addWidget(agcBtn_);
+	m2->addStretch(1);
+	cleanLabel_ = new QLabel("Clean-up");
+	mg->addWidget(cleanLabel_, 2, 0);
+	mg->addLayout(m2, 2, 1);
+	everyBtn_ = toggle("Every scene", "Hear this mic in every scene, like OBS's own Mic/Aux, so switching scenes or cameras never cuts it");
+	micOnlyBtn_ = toggle("Mic only", "Turn the phone's camera off and send only its mic");
+	otherBtn_ = toggle("Use in other apps", "Use this mic in Chrome, Discord or Zoom, through the free VB-Audio Virtual Cable");
+	auto *m3 = new QHBoxLayout();
+	m3->addWidget(everyBtn_);
+	m3->addWidget(micOnlyBtn_);
+	m3->addWidget(otherBtn_);
+	m3->addStretch(1);
+	mg->addWidget(new QLabel("Route"), 3, 0);
+	mg->addLayout(m3, 3, 1);
+	root->addWidget(micPanel_);
 
 	auto *foot = new QHBoxLayout();
 	previewBtn_ = toggle("Preview", "Show the preview (turn off for a slim dock)");
@@ -379,6 +481,10 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	refreshTimer_ = new QTimer(this);
 	refreshTimer_->setSingleShot(true);
 	connect(refreshTimer_, &QTimer::timeout, this, &PhoneDock::refresh);
+	meterTimer_ = new QTimer(this);
+	connect(meterTimer_, &QTimer::timeout, this, &PhoneDock::tickMeter);
+	meterTimer_->start(50);
+	clipAt_.start();
 	messageTimer_ = new QTimer(this);
 	messageTimer_->setSingleShot(true);
 	connect(messageTimer_, &QTimer::timeout, message_, &QLabel::hide);
@@ -430,6 +536,15 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	});
 	connect(torchBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"torch", on}}.dump()); });
 	connect(micBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"mic", on}}.dump()); });
+	connect(inputBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
+		Hub::get().sendCmd(selected_, json{{"micIn", inputBox_->itemData(i).toString().toStdString()}}.dump());
+	});
+	connect(nsBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"ns", on}}.dump()); });
+	connect(aecBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"aec", on}}.dump()); });
+	connect(agcBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"agc", on}}.dump()); });
+	connect(micOnlyBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"micOnly", on}}.dump()); });
+	connect(everyBtn_, &QToolButton::clicked, this, &PhoneDock::setEveryScene);
+	connect(otherBtn_, &QToolButton::clicked, this, &PhoneDock::setInOtherApps);
 	connect(mirrorBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"mirror", on}}.dump()); });
 	connect(flipBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"flip", on}}.dump()); });
 	connect(lockBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"lock", on}}.dump()); });
@@ -571,7 +686,9 @@ void PhoneDock::refresh()
 
 	const PhoneView *v = current();
 	const Cam *c = v ? v->caps.cam(v->state.cam) : nullptr;
-	controls_->setEnabled(v && v->connected);
+	const bool micOnly = v && v->connected && v->state.micOnly;
+	// With the camera off, the camera controls can't do anything (DESIGN.md rule 7).
+	controls_->setEnabled(v && v->connected && !micOnly);
 	usbBtn_->setVisible(true);
 
 	if (!v) {
@@ -597,7 +714,12 @@ void PhoneDock::refresh()
 		if (v->state.battery >= 0)
 			parts << QString("%1%").arg(v->state.battery);
 		status_->setText(parts.join(" · "));
-		preview_->setPlaceholder("Waiting for video...");
+		if (micOnly) {
+			preview_->setPlaceholder("Mic only: the phone's camera is off. Turn Mic only off to bring it back.");
+			preview_->clear();
+		} else {
+			preview_->setPlaceholder("Waiting for video...");
+		}
 	}
 
 	// Camera list.
@@ -639,11 +761,54 @@ void PhoneDock::refresh()
 
 	torchBtn_->setEnabled(c && c->flash);
 	torchBtn_->setChecked(v && v->state.torch);
-	micBtn_->setEnabled(v && v->caps.mic);
-	micBtn_->setChecked(v && v->state.mic);
 	mirrorBtn_->setChecked(v && v->state.mirror);
 	flipBtn_->setChecked(v && v->state.flip);
 	lockBtn_->setChecked(v && v->state.lock);
+
+	// Mic.
+	const bool live = v && v->connected;
+	const bool micOk = live && v->caps.mic;
+	micBtn_->setEnabled(micOk);
+	micBtn_->setChecked(micOk && v->state.mic);
+	micBtn_->setText(!micOk ? "Mic" : v->state.mic ? "On" : "Muted");
+	micBtn_->setToolTip(live && !v->caps.mic ? "The phone hasn't allowed Rely-A-Cam to use its microphone. Allow it in the phone's Settings > Apps > Rely-A-Cam > Permissions."
+						: "Mute or unmute this phone's mic");
+	inputBox_->blockSignals(true);
+	inputBox_->clear();
+	if (v)
+		for (auto &m : v->caps.mics) {
+			inputBox_->addItem(QString::fromStdString(m.label), QString::fromStdString(m.id));
+			if (m.id == v->state.micIn)
+				inputBox_->setCurrentIndex(inputBox_->count() - 1);
+		}
+	inputBox_->setEnabled(micOk && inputBox_->count() > 0);
+	inputBox_->blockSignals(false);
+	struct Fx {
+		QToolButton *b;
+		const char *key;
+		bool on;
+	};
+	const Fx fx[] = {{nsBtn_, "ns", v && v->state.ns}, {aecBtn_, "aec", v && v->state.aec}, {agcBtn_, "agc", v && v->state.agc}};
+	bool anyFx = false;
+	for (const Fx &f : fx) {
+		// Only the effects this phone has (a phone without one can't turn it on).
+		const bool has = v && v->caps.hasClean(f.key);
+		f.b->setVisible(has);
+		f.b->setEnabled(micOk);
+		f.b->setChecked(has && f.on);
+		anyFx = anyFx || has;
+	}
+	cleanLabel_->setVisible(anyFx);
+	micOnlyBtn_->setEnabled(live);
+	micOnlyBtn_->setChecked(micOnly);
+	{
+		obs_source_t *mic = v ? Hub::get().micSource(v->device) : nullptr;
+		everyBtn_->setEnabled(mic != nullptr);
+		everyBtn_->setChecked(routing::isEveryScene(mic));
+		otherBtn_->setEnabled(mic != nullptr);
+		otherBtn_->setChecked(mic && routing::inOtherApps(mic));
+		obs_source_release(mic);
+	}
 
 	// Presets, rebuilt only when the camera changes.
 	const std::string key = c ? v->device + "/" + c->id : "";
@@ -701,6 +866,57 @@ void PhoneDock::refresh()
 	} else {
 		preview_->setPrediction(1, QString());
 	}
+}
+
+void PhoneDock::tickMeter()
+{
+	if (!isVisible())
+		return;
+	const float p = selected_.empty() ? 0.0f : Hub::get().takePeak(selected_);
+	// Falls back smoothly, like OBS's meters; rises at once.
+	shownPeak_ = std::max(p, shownPeak_ * 0.8f);
+	if (p >= 0.99f) {
+		clipped_ = true;
+		clipAt_.restart();
+	}
+	if (clipped_ && clipAt_.elapsed() > 1000)
+		clipped_ = false;
+	meter_->setLevel(shownPeak_, clipped_);
+}
+
+void PhoneDock::setEveryScene(bool on)
+{
+	obs_source_t *mic = Hub::get().micSource(selected_);
+	if (!mic)
+		return;
+	routing::setEveryScene(mic, on);
+	const QString name = QString::fromUtf8(obs_source_get_name(mic));
+	message(on ? name + " is heard in every scene now, like OBS's own Mic/Aux."
+		   : name + " is only in this scene now (it was added to it).");
+	obs_source_release(mic);
+	refresh();
+}
+
+void PhoneDock::setInOtherApps(bool on)
+{
+	obs_source_t *mic = Hub::get().micSource(selected_);
+	if (!mic)
+		return;
+	switch (routing::setInOtherApps(mic, on)) {
+	case routing::OtherApps::NoCable:
+		QDesktopServices::openUrl(QUrl(routing::kCableUrl));
+		message("Using the phone mic in Chrome, Discord or Zoom needs the free VB-Audio Virtual Cable. Its download page is open: "
+			"install it, restart the PC, then turn this on again.");
+		break;
+	case routing::OtherApps::On:
+		message("In Chrome, Discord or Zoom, pick \"CABLE Output\" as the microphone. OBS's monitoring plays into the cable now, "
+			"so anything else set to monitor goes there too instead of your headphones. Turn this off to undo it.");
+		break;
+	case routing::OtherApps::Off:
+		break;
+	}
+	obs_source_release(mic);
+	refresh();
 }
 
 void PhoneDock::requestZoom(double z)

@@ -16,11 +16,12 @@ Zoom is synced both ways: pinch on the phone or in the dock, and both follow.
 android/             Gradle, Kotlin
   app/               Compose UI: scan, live, settings
   core/camera/       the ONE Camera2 owner: discovery, zoom, focus, torch, orientation
-  core/stream/       MediaCodec encoder, TCP link, frame dropping
+  core/stream/       MediaCodec encoders, mic inputs and clean-up (Mics.kt), TCP link, frame dropping
   core/protocol/     wire format (pure JVM, unit-tested against protocol/vectors)
   core/qr/           QR decoding (zxing core; from Filet)
 obs-plugin/          C++ / CMake, based on the OBS plugin template
-  src/source/        the OBS source (video and audio)
+  src/source/        the OBS sources: the camera (video) and the phone's mic (audio, its own source)
+  src/audio/         where a phone mic is heard (every scene = global channels 7+) and Use in other apps
   src/dock/          the Qt dock: preview, presets, slider, QR panel
   src/net/           listener, pairing, protocol
   src/decode/        FFmpeg H.264 / HEVC / AAC decoding

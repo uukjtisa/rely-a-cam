@@ -84,16 +84,39 @@ data class CamCaps(
     }
 }
 
-data class Caps(val device: String, val cams: List<CamCaps>, val codecs: List<String>, val mic: Boolean) {
+/** One audio input the phone has right now (built-in mics, and wired, USB or Bluetooth when connected). */
+data class MicInput(val id: String, val label: String) {
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("label", label)
+
+    companion object {
+        fun fromJson(o: JSONObject) = MicInput(o.optString("id"), o.optString("label"))
+    }
+}
+
+/**
+ * The phone's capability report. `mics` lists its audio inputs; `clean` lists the voice clean-up
+ * effects it has, from "ns" (noise suppression), "aec" (echo cancellation) and "agc" (auto gain).
+ */
+data class Caps(
+    val device: String,
+    val cams: List<CamCaps>,
+    val codecs: List<String>,
+    val mic: Boolean,
+    val mics: List<MicInput> = emptyList(),
+    val clean: List<String> = emptyList(),
+) {
     fun toJson(): JSONObject = JSONObject()
         .put("device", device).put("cams", JSONArray(cams.map { it.toJson() }))
         .put("codecs", JSONArray(codecs)).put("mic", mic)
+        .put("mics", JSONArray(mics.map { it.toJson() })).put("clean", JSONArray(clean))
 
     companion object {
         fun fromJson(o: JSONObject) = Caps(
             o.optString("device"),
             o.optJSONArray("cams")?.let { a -> (0 until a.length()).map { CamCaps.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             o.optJSONArray("codecs").strings(), o.optBoolean("mic"),
+            o.optJSONArray("mics")?.let { a -> (0 until a.length()).map { MicInput.fromJson(a.getJSONObject(it)) } }.orEmpty(),
+            o.optJSONArray("clean").strings(),
         )
     }
 }
@@ -113,19 +136,28 @@ data class CamState(
     val temp: Double = 0.0,
     val battery: Int = -1,
     val live: Boolean = false,
+    /** The audio input in use (a [MicInput] id), and the clean-up effects that are on. */
+    val micIn: String = "",
+    val ns: Boolean = false,
+    val aec: Boolean = false,
+    val agc: Boolean = false,
+    /** Camera off: only the mic streams. */
+    val micOnly: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("cam", cam).put("zoom", round3(zoom)).put("torch", torch).put("mic", mic)
         .put("mode", mode).put("codec", codec).put("rot", rot).put("mirror", mirror)
         .put("flip", flip).put("lock", lock).put("temp", round1(temp)).put("battery", battery)
-        .put("live", live)
+        .put("live", live).put("micIn", micIn).put("ns", ns).put("aec", aec).put("agc", agc)
+        .put("micOnly", micOnly)
 
     companion object {
         fun fromJson(o: JSONObject) = CamState(
             o.optString("cam"), o.optDouble("zoom", 1.0), o.optBoolean("torch"), o.optBoolean("mic", true),
             o.optString("mode"), o.optString("codec", "h264"), o.optInt("rot"), o.optBoolean("mirror"),
             o.optBoolean("flip"), o.optBoolean("lock"), o.optDouble("temp", 0.0), o.optInt("battery", -1),
-            o.optBoolean("live"),
+            o.optBoolean("live"), o.optString("micIn"), o.optBoolean("ns"), o.optBoolean("aec"),
+            o.optBoolean("agc"), o.optBoolean("micOnly"),
         )
     }
 }
@@ -146,6 +178,11 @@ data class Cmd(
     val lock: Boolean? = null,
     val keyframe: Boolean = false,
     val zooms: Map<String, Double> = emptyMap(),
+    val micIn: String? = null,
+    val ns: Boolean? = null,
+    val aec: Boolean? = null,
+    val agc: Boolean? = null,
+    val micOnly: Boolean? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         cam?.let { put("cam", it) }; zoom?.let { put("zoom", round3(it)) }
@@ -154,6 +191,8 @@ data class Cmd(
         mirror?.let { put("mirror", it) }; flip?.let { put("flip", it) }; lock?.let { put("lock", it) }
         if (keyframe) put("keyframe", true)
         if (zooms.isNotEmpty()) put("zooms", JSONObject(zooms.mapValues { round3(it.value) }))
+        micIn?.let { put("micIn", it) }; ns?.let { put("ns", it) }; aec?.let { put("aec", it) }
+        agc?.let { put("agc", it) }; micOnly?.let { put("micOnly", it) }
     }
 
     companion object {
@@ -170,6 +209,8 @@ data class Cmd(
                 mirror = b("mirror"), flip = b("flip"), lock = b("lock"),
                 keyframe = o.optBoolean("keyframe"),
                 zooms = zs?.keys()?.asSequence()?.associateWith { zs.optDouble(it) }.orEmpty(),
+                micIn = o.optString("micIn").takeIf { o.has("micIn") && it.isNotEmpty() },
+                ns = b("ns"), aec = b("aec"), agc = b("agc"), micOnly = b("micOnly"),
             )
         }
     }

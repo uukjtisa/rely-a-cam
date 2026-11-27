@@ -1,11 +1,14 @@
 package dev.niccc2007.relyacam.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,7 +24,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -113,3 +119,59 @@ fun Secondary(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) 
 
 @Composable
 fun Gap(w: Int) = Box(Modifier.width(w.dp))
+
+/**
+ * A mic level bar with OBS's mixer zones (green to -9 dB, yellow to -3 dB, red above), and a CLIP
+ * light that is dim until the mic reaches full scale. The zones are the one place green, yellow
+ * and red mean loudness instead of status (docs/DESIGN.md).
+ */
+@Composable
+fun Meter(peak: Float, clip: Boolean, modifier: Modifier = Modifier, height: Dp = 6.dp) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Canvas(Modifier.weight(1f).height(height).clip(RoundedCornerShape(50))) {
+            drawRect(Palette.line)
+            val w = size.width * peak.coerceIn(0f, 1f)
+            val zones = listOf(0.65f to Palette.green, 0.85f to Palette.yellow, 1f to Palette.red)
+            var from = 0f
+            for ((to, c) in zones) {
+                val x0 = size.width * from
+                val x1 = minOf(w, size.width * to)
+                if (x1 > x0) drawRect(c, topLeft = Offset(x0, 0f), size = Size(x1 - x0, size.height))
+                from = to
+            }
+        }
+        Text(
+            "CLIP", fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            color = if (clip) Color.White else Palette.muted,
+            modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(if (clip) Palette.red else Palette.base)
+                .padding(horizontal = 4.dp, vertical = 1.dp),
+        )
+    }
+}
+
+/** A heading inside a sheet ("MIC", "VIDEO"). */
+@Composable
+fun SectionTitle(text: String) {
+    Text(text.uppercase(), color = Palette.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
+}
+
+/** One choice in a sheet: a row that shows [on] with the accent outline, with optional trailing content. */
+@Composable
+fun SheetRow(
+    text: String,
+    on: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    trailing: @Composable () -> Unit = {},
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.base)
+            .border(1.dp, if (on) Palette.blueLight else Palette.base, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(text, color = if (enabled) Palette.text else Palette.muted, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        trailing()
+    }
+}

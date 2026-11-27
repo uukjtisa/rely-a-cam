@@ -72,6 +72,26 @@ private:
 	double scale_ = 1;
 };
 
+/**
+ * The mic level: OBS's mixer zones (green, yellow, red) and a CLIP light. The zones are the one
+ * place the dock uses fixed colours besides the QR (docs/DESIGN.md).
+ */
+class MeterWidget : public QWidget {
+	Q_OBJECT
+public:
+	explicit MeterWidget(QWidget *parent = nullptr);
+	void setLevel(float peak, bool clip);
+	QSize sizeHint() const override { return {140, 16}; }
+	QSize minimumSizeHint() const override { return {70, 16}; }
+
+protected:
+	void paintEvent(QPaintEvent *) override;
+
+private:
+	float peak_ = 0;
+	bool clip_ = false;
+};
+
 class PhoneDock : public QWidget {
 	Q_OBJECT
 public:
@@ -105,6 +125,9 @@ private:
 	void checkForUpdate();
 	void usbConnect();
 	void usbInstall();
+	void tickMeter();
+	void setEveryScene(bool on);
+	void setInOtherApps(bool on);
 	const PhoneView *current() const;
 
 	std::string selected_;
@@ -128,6 +151,18 @@ private:
 	QComboBox *camBox_ = nullptr, *modeBox_ = nullptr, *codecBox_ = nullptr;
 	QToolButton *torchBtn_ = nullptr, *micBtn_ = nullptr, *mirrorBtn_ = nullptr, *flipBtn_ = nullptr, *lockBtn_ = nullptr;
 	QToolButton *previewBtn_ = nullptr;
+
+	// Mic: on/off with its meter, input, clean-up, and where it's heard.
+	QWidget *micPanel_ = nullptr;
+	MeterWidget *meter_ = nullptr;
+	QComboBox *inputBox_ = nullptr;
+	QLabel *cleanLabel_ = nullptr;
+	QToolButton *nsBtn_ = nullptr, *aecBtn_ = nullptr, *agcBtn_ = nullptr;
+	QToolButton *everyBtn_ = nullptr, *micOnlyBtn_ = nullptr, *otherBtn_ = nullptr;
+	QTimer *meterTimer_ = nullptr;
+	float shownPeak_ = 0;
+	QElapsedTimer clipAt_;
+	bool clipped_ = false;
 	QPushButton *usbBtn_ = nullptr, *firewallBtn_ = nullptr, *updateBtn_ = nullptr;
 	QLabel *message_ = nullptr;
 	QTimer *messageTimer_ = nullptr;

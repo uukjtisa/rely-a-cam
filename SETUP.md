@@ -52,13 +52,52 @@ canvas. Nothing else in your scenes changes.
 - **Zoom from the phone:** pinch on the screen, use the preset chips, or drag the ruler.
 - **Turn the phone** and the OBS source turns with it. **Lock** keeps the current shape.
 - **Mirror**, **Flip**, **Torch**, **Mic** and the camera switch work from both sides.
-- **Quality:** pick a mode in the dock or on the phone. You only see modes the phone supports.
-  1080p30 is the default.
+- **Quality:** pick a mode in the dock or on the phone (**Setup** on the phone). You only see
+  modes the phone supports. 1080p30 is the default.
 - **Black screen** on the phone saves battery and heat while streaming. Tap to wake.
 - **Stop** on the phone, or its notification, turns the camera and mic off at once.
 
 The phone remembers this PC. Next time, open the app and it reconnects by itself. OBS
 remembers each phone's camera, zoom (per camera), quality, mic, mirror, flip and lock, and restores them.
+
+## The phone's mic
+
+![The dock's Mic section and the phone mic sources in OBS's Audio Mixer](docs/img/mock-mic.png)
+
+Each phone's mic is its own source in OBS, **Phone Mic - <phone>**, separate from its camera. So
+one phone can be your main mic while you switch to another phone's camera.
+
+- **The first phone you pair is the main mic.** Its mic is on and set to **Every scene**: it's
+  heard in every scene, like OBS's own Mic/Aux, and switching scenes or cameras never cuts it.
+- **Phones paired after it start with their mic off**, as a source in the current scene. Turn it
+  on in the dock (or on that phone) if you want it.
+- **Every scene** off puts the mic into the current scene as a normal source. On takes it out of
+  your scenes again, so it's never heard twice.
+- **Input:** pick which of the phone's mics to use. Phones list their built-in mics (often a
+  bottom and a back one). A wired, USB or Bluetooth mic shows up once it's connected to the phone.
+  Bluetooth mics are built in but haven't been tested on a real headset yet.
+- **Clean-up:** **Noise** cuts steady hiss and hum, **Echo** removes sound from a speaker near the
+  phone, and **Auto gain** evens out loud and quiet. You only see the ones that phone has.
+- **The meter** shows the phone's level as it arrives. **CLIP** lights when it's too loud: move
+  the phone back, or turn on Auto gain.
+- **Mic only** turns the phone's camera off and keeps the mic. It saves battery and heat when a
+  phone is only there to listen.
+- On the phone, all of this is under **Setup** (the rail button, or tap the quality line).
+- Volume, filters (noise gate, compressor), monitoring and sync offset are OBS's own: use the
+  Audio Mixer, as with any mic.
+
+### Use the phone mic in Chrome, Discord or Zoom
+
+Windows can only see an OBS source as a microphone through a virtual audio cable.
+
+1. Install the free [VB-Audio Virtual Cable](https://vb-audio.com/Cable/), then restart the PC.
+2. In the dock, select the phone and turn on **Use in other apps**.
+3. In Chrome, Discord or Zoom, pick **CABLE Output** as the microphone.
+
+This plays the mic into the cable through OBS's audio monitoring. While it's on, anything else
+you set to monitor in OBS goes into the cable too, not to your headphones. Turning it off gives
+OBS its old monitoring device back. If the cable isn't installed, the button opens its download
+page instead.
 
 ## When a phone can't connect
 

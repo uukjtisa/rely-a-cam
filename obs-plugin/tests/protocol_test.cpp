@@ -107,6 +107,19 @@ int main()
 		if (c.contains("normal"))
 			CHECK(normaliseCode(raw) == c["normal"].get<std::string>(), raw.c_str());
 	}
+	{
+		// The mic fields, as PROTOCOL.md's CAPS and STATE examples write them.
+		cases++;
+		const Caps caps = Caps::fromJson(
+			R"({"device":"nova 10","cams":[],"codecs":["h264"],"mic":true,)"
+			R"("mics":[{"id":"15:bottom","label":"Bottom mic"},{"id":"15:back","label":"Back mic"}],"clean":["ns","agc"]})");
+		CHECK(caps.mics.size() == 2 && caps.mics[1].id == "15:back" && caps.mics[1].label == "Back mic", "caps mics");
+		CHECK(caps.hasClean("ns") && caps.hasClean("agc") && !caps.hasClean("aec"), "caps clean");
+		const State st = State::fromJson(R"({"cam":"4","mic":true,"micIn":"15:back","ns":true,"aec":false,"agc":true,"micOnly":true})");
+		CHECK(st.micIn == "15:back" && st.ns && !st.aec && st.agc && st.micOnly, "state mic fields");
+		const State old = State::fromJson(R"({"cam":"4","mic":true})");
+		CHECK(old.micIn.empty() && !old.ns && !old.micOnly, "state from an older app");
+	}
 	std::printf("%d cases, %d failures\n", cases, failures);
 	return failures ? 1 : 0;
 }

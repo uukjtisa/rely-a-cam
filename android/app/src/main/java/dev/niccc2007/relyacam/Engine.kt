@@ -5,8 +5,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.ImageReader
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -28,6 +32,7 @@ import dev.niccc2007.relyacam.protocol.Caps
 import dev.niccc2007.relyacam.protocol.Cmd
 import dev.niccc2007.relyacam.protocol.Discovery
 import dev.niccc2007.relyacam.protocol.Hello
+import dev.niccc2007.relyacam.protocol.MicInput
 import dev.niccc2007.relyacam.protocol.Mode
 import dev.niccc2007.relyacam.protocol.Pairing
 import dev.niccc2007.relyacam.protocol.Welcome
@@ -35,8 +40,11 @@ import dev.niccc2007.relyacam.qr.Luma
 import dev.niccc2007.relyacam.qr.QrDecode
 import dev.niccc2007.relyacam.stream.AudioEncoder
 import dev.niccc2007.relyacam.stream.Finder
+import dev.niccc2007.relyacam.stream.Fx
 import dev.niccc2007.relyacam.stream.Link
 import dev.niccc2007.relyacam.stream.LinkEvents
+import dev.niccc2007.relyacam.stream.MicSource
+import dev.niccc2007.relyacam.stream.Mics
 import dev.niccc2007.relyacam.stream.Reach
 import dev.niccc2007.relyacam.stream.ReachException
 import dev.niccc2007.relyacam.stream.VideoEncoder
@@ -82,7 +90,19 @@ data class UiState(
     val notice: String? = null,
     val previewW: Int = 1280,
     val previewH: Int = 720,
+    /** The phone's inputs right now, the one in use, its clean-up effects and which are on. */
+    val mics: List<MicInput> = emptyList(),
+    val micIn: String = "",
+    val clean: List<String> = emptyList(),
+    val ns: Boolean = false,
+    val aec: Boolean = false,
+    val agc: Boolean = false,
+    /** Camera off, mic still streaming. */
+    val micOnly: Boolean = false,
 )
+
+/** The mic meter: peak of the last ~50 ms (0..1), and CLIP, held for a second after it happens. */
+data class MicLevel(val peak: Float = 0f, val clip: Boolean = false)
 
 /**
  * Everything the app does, in one place: scanning, connecting, streaming and applying requests.
@@ -106,6 +126,15 @@ object Engine : CameraEvents, LinkEvents {
 
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui
+
+    /** Kept apart from [ui] because it changes 20 times a second: only the meters redraw. */
+    private val _level = MutableStateFlow(MicLevel())
+    val level: StateFlow<MicLevel> = _level
+    private var clipUntil = 0L
+
+    private lateinit var audio: AudioManager
+    private var micSources: List<MicSource> = emptyList()
+    private var bluetoothRouted = false
 
     private var visible = false
     private var preview: SurfaceTexture? = null
@@ -131,7 +160,13 @@ object Engine : CameraEvents, LinkEvents {
         prefs = Prefs(app)
         camera = CameraController(app, this)
         orientation = DeviceOrientation(app) { post { onDeviceTurned() } }
+        audio = app.getSystemService(AudioManager::class.java)
         _ui.update { it.copy(recent = prefs.pcs()) }
+        // Called at once with what's connected now, then on every plug-in and unplug.
+        audio.registerAudioDeviceCallback(object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = post { refreshMics() }
+            override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = post { refreshMics() }
+        }, h)
     }
 
     private fun post(block: () -> Unit) { h.post { runCatching(block).onFailure { Log.e(TAG, "engine", it) } } }
@@ -346,13 +381,17 @@ object Engine : CameraEvents, LinkEvents {
         val mode = pickMode(cam, restore.mode)
         val codec = pickCodec(restore.codec, mode)
         val zoom = (restore.zoom ?: zooms[cam.id] ?: 1.0).coerceIn(cam.zoomMin, cam.zoomMax)
+        val micOnly = restore.micOnly ?: false
         live = true
         prefs.wasLive = true
         set {
             it.copy(
                 screen = Screen.LIVE, cam = cam, mode = mode, codec = codec, zoom = zoom, torch = false,
                 mirror = restore.mirror ?: false, flip = restore.flip ?: false, lock = restore.lock ?: false,
-                mic = restore.mic ?: true, black = false,
+                mic = (restore.mic ?: true) || micOnly, black = false, micOnly = micOnly,
+                micIn = restore.micIn?.takeIf { id -> it.mics.any { m -> m.id == id } } ?: it.micIn,
+                ns = (restore.ns ?: false) && "ns" in it.clean, aec = (restore.aec ?: false) && "aec" in it.clean,
+                agc = (restore.agc ?: false) && "agc" in it.clean,
             )
         }
         LiveService.start(app, s.pcName, s.micAllowed)
@@ -384,6 +423,7 @@ object Engine : CameraEvents, LinkEvents {
         camera.closeAndWait()
         venc?.stop()
         venc = null
+        if (s.micOnly) return
         val enc = try {
             VideoEncoder(s.codec, m.w, m.h, m.fps) { pts, flags, data -> link?.sendVideo(pts, flags, data) }
         } catch (e: Exception) {
@@ -403,15 +443,77 @@ object Engine : CameraEvents, LinkEvents {
     private fun startAudio() {
         if (aenc != null) return
         val cam = s.cam ?: return
-        aenc = runCatching { AudioEncoder(cam.realtimeClock) { pts, flags, data -> link?.sendAudio(pts, flags, data) } }
-            .onFailure { set { s -> s.copy(notice = "The microphone is busy in another app.") } }
-            .getOrNull()
+        val input = inputDevice()
+        routeBluetooth(input)
+        aenc = runCatching {
+            AudioEncoder(cam.realtimeClock, input, fx(), { pts, flags, data -> link?.sendAudio(pts, flags, data) }, ::onLevel)
+        }.onFailure { set { s -> s.copy(notice = "The microphone is busy in another app.") } }.getOrNull()
         if (aenc != null) link?.sendAudioConfig()
     }
 
     private fun stopAudio() {
         aenc?.stop()
         aenc = null
+        routeBluetooth(null)
+        _level.value = MicLevel()
+    }
+
+    private fun fx() = Fx(ns = s.ns, aec = s.aec, agc = s.agc)
+
+    private fun inputDevice(): AudioDeviceInfo? = micSources.firstOrNull { it.id == s.micIn }?.device
+
+    /** From the audio thread. */
+    private fun onLevel(peak: Float, clipped: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        if (clipped) clipUntil = now + 1000
+        _level.value = MicLevel(peak, now < clipUntil)
+    }
+
+    /**
+     * The phone's inputs changed (or this is the first look). A mic that was unplugged falls back
+     * to the first built-in one; a new one is listed but never switched to by itself.
+     */
+    private fun refreshMics() {
+        micSources = Mics.list(audio)
+        val list = micSources.map { MicInput(it.id, it.label) }
+        val cur = s.micIn.takeIf { id -> list.any { it.id == id } } ?: list.firstOrNull()?.id.orEmpty()
+        val moved = cur != s.micIn
+        if (list != s.mics) Log.i(TAG, "mics: " + list.joinToString { "${it.id}=${it.label}" })
+        set { it.copy(mics = list, micIn = cur, clean = Mics.effects()) }
+        if (moved && aenc != null) {
+            routeBluetooth(inputDevice())
+            aenc?.setInput(inputDevice())
+        }
+        if (live) { sendCaps(); sendState(force = true) }
+    }
+
+    /**
+     * A Bluetooth mic only records while the phone holds a call-style link to it, so that link is
+     * opened for a Bluetooth input and closed for anything else. Built, not tested on hardware.
+     */
+    @Suppress("DEPRECATION")
+    private fun routeBluetooth(input: AudioDeviceInfo?) {
+        val bt = micSources.firstOrNull { it.device == input }?.bluetooth == true
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 31) {
+                if (bt) {
+                    val out = audio.availableCommunicationDevices
+                    (out.firstOrNull { it.type == input!!.type } ?: out.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO })
+                        ?.let { bluetoothRouted = audio.setCommunicationDevice(it) }
+                } else if (bluetoothRouted) {
+                    audio.clearCommunicationDevice()
+                    bluetoothRouted = false
+                }
+            } else if (bt && !bluetoothRouted) {
+                audio.startBluetoothSco()
+                audio.isBluetoothScoOn = true
+                bluetoothRouted = true
+            } else if (!bt && bluetoothRouted) {
+                audio.stopBluetoothSco()
+                audio.isBluetoothScoOn = false
+                bluetoothRouted = false
+            }
+        }.onFailure { Log.w(TAG, "bluetooth mic", it) }
     }
 
     private fun stopLive(sayBye: Boolean) {
@@ -425,7 +527,7 @@ object Engine : CameraEvents, LinkEvents {
         venc?.stop(); venc = null
         stopAudio()
         LiveService.stop(app)
-        set { it.copy(torch = false, black = false, reconnecting = false) }
+        set { it.copy(torch = false, black = false, reconnecting = false, micOnly = false) }
     }
 
     /** The Stop button: everything is released and the notification goes (must-never list). */
@@ -481,21 +583,39 @@ object Engine : CameraEvents, LinkEvents {
         zoom = zoom.coerceIn(cam.zoomMin, cam.zoomMax)
         zooms[cam.id] = zoom
 
-        val torch = (c.torch ?: s.torch) && cam.flash
+        val wasMicOnly = s.micOnly
+        val micOnly = c.micOnly ?: wasMicOnly
+        val torch = (c.torch ?: s.torch) && cam.flash && !micOnly
         val lock = c.lock ?: s.lock
         val rot = if (lock) s.rot else Upright.streamRotation(cam, orientation.degrees)
+        val oldIn = s.micIn
+        // Mic only with the mic muted would send nothing at all, so turning it on unmutes.
+        val mic = (c.mic ?: s.mic) || (micOnly && !wasMicOnly)
         set {
             it.copy(cam = cam, mode = mode, codec = codec, zoom = zoom, torch = torch, rot = rot, lock = lock,
-                mirror = c.mirror ?: it.mirror, flip = c.flip ?: it.flip, mic = c.mic ?: it.mic)
+                mirror = c.mirror ?: it.mirror, flip = c.flip ?: it.flip, mic = mic, micOnly = micOnly,
+                micIn = c.micIn?.takeIf { id -> it.mics.any { m -> m.id == id } } ?: it.micIn,
+                ns = (c.ns ?: it.ns) && "ns" in it.clean, aec = (c.aec ?: it.aec) && "aec" in it.clean,
+                agc = (c.agc ?: it.agc) && "agc" in it.clean)
         }
-        if (restart) {
+        if (micOnly && !wasMicOnly) {
+            camera.closeAndWait()
+            venc?.stop()
+            venc = null
+            if (restart) sendCaps()
+        } else if (restart || (wasMicOnly && !micOnly)) {
             openCamera()
-            sendCaps()
-        } else {
+            if (restart) sendCaps()
+        } else if (!micOnly) {
             if (c.zoom != null) camera.setZoom(zoom, glide = fromPc)
             if (c.torch != null) camera.setTorch(torch)
         }
-        c.mic?.let { if (it && s.micAllowed) startAudio() else if (!it) stopAudio() }
+        if (s.mic && s.micAllowed) startAudio() else stopAudio()
+        if (s.micIn != oldIn) {
+            routeBluetooth(inputDevice())
+            aenc?.setInput(inputDevice())
+        }
+        aenc?.setFx(fx())
         if (c.keyframe) venc?.requestKeyFrame()
         sendState(force = true)
     }
@@ -696,6 +816,8 @@ object Engine : CameraEvents, LinkEvents {
         },
         codecs = encoderCodecs,
         mic = s.micAllowed,
+        mics = s.mics,
+        clean = s.clean,
     )
 
     private fun sendCaps() { link?.sendCaps(caps()) }
@@ -719,6 +841,7 @@ object Engine : CameraEvents, LinkEvents {
                 cam = u.cam?.id.orEmpty(), zoom = u.zoom, torch = u.torch, mic = u.mic && aenc != null,
                 mode = u.mode, codec = u.codec, rot = u.rot, mirror = u.mirror, flip = u.flip,
                 lock = u.lock, temp = u.temp, battery = u.battery, live = live && link != null,
+                micIn = u.micIn, ns = u.ns, aec = u.aec, agc = u.agc, micOnly = u.micOnly,
             )
         )
     }

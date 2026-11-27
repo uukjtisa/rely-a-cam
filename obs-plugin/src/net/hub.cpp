@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hub.hpp"
 
+#include "../audio/routing.hpp"
+#include "../source/phone-mic.hpp"
 #include "../source/phone-source.hpp"
 #include "plugin-support.h"
 
@@ -453,6 +455,44 @@ void Hub::unregisterSource(PhoneSource *s)
 	emit phonesChanged();
 }
 
+void Hub::registerMic(PhoneMic *m)
+{
+	{
+		std::lock_guard<std::mutex> l(m_);
+		mics_.push_back(m);
+	}
+	emit phonesChanged();
+}
+
+void Hub::unregisterMic(PhoneMic *m)
+{
+	{
+		std::lock_guard<std::mutex> l(m_);
+		mics_.erase(std::remove(mics_.begin(), mics_.end(), m), mics_.end());
+	}
+	emit phonesChanged();
+}
+
+obs_source_t *Hub::micSource(const std::string &device) const
+{
+	std::lock_guard<std::mutex> l(m_);
+	for (auto *m : mics_)
+		if (m->device() == device)
+			return obs_source_get_ref(m->obs());
+	return nullptr;
+}
+
+float Hub::takePeak(const std::string &device)
+{
+	std::lock_guard<std::mutex> l(m_);
+	auto it = peaks_.find(device);
+	if (it == peaks_.end())
+		return 0;
+	const float v = it->second;
+	it->second = 0;
+	return v;
+}
+
 void Hub::sourceChanged()
 {
 	{
@@ -479,21 +519,25 @@ void Hub::deliverPicture(const std::string &device, Picture &p)
 
 void Hub::deliverAudio(const std::string &device, const float *const *planes, int channels, int frames, int rate)
 {
+	// The level as it arrives, before OBS's volume and filters: it's the phone's level.
+	float peak = 0;
+	for (int c = 0; c < channels && c < MAX_AV_PLANES; c++)
+		for (int i = 0; i < frames; i++)
+			peak = std::max(peak, std::fabs(planes[c][i]));
+	obs_source_audio a = {};
+	for (int c = 0; c < channels && c < MAX_AV_PLANES; c++)
+		a.data[c] = reinterpret_cast<const uint8_t *>(planes[c]);
+	a.frames = uint32_t(frames);
+	a.speakers = channels >= 2 ? SPEAKERS_STEREO : SPEAKERS_MONO;
+	a.format = AUDIO_FORMAT_FLOAT_PLANAR;
+	a.samples_per_sec = uint32_t(rate);
+	a.timestamp = os_gettime_ns();
 	std::lock_guard<std::mutex> l(m_);
-	for (auto *s : sources_) {
-		if (s->device() != device)
-			continue;
-		obs_source_audio a = {};
-		for (int c = 0; c < channels && c < MAX_AV_PLANES; c++)
-			a.data[c] = reinterpret_cast<const uint8_t *>(planes[c]);
-		a.frames = uint32_t(frames);
-		a.speakers = channels >= 2 ? SPEAKERS_STEREO : SPEAKERS_MONO;
-		a.format = AUDIO_FORMAT_FLOAT_PLANAR;
-		a.samples_per_sec = uint32_t(rate);
-		a.timestamp = os_gettime_ns();
-		obs_source_output_audio(s->obs(), &a);
-		return;
-	}
+	float &pk = peaks_[device];
+	pk = std::max(pk, peak);
+	for (auto *m : mics_)
+		if (m->device() == device)
+			obs_source_output_audio(m->obs(), &a);
 }
 
 void Hub::deliverState(const std::string &device, const State &st)
@@ -502,8 +546,12 @@ void Hub::deliverState(const std::string &device, const State &st)
 	for (auto *s : sources_)
 		if (s->device() == device) {
 			s->setTransform(st.rot, st.mirror, st.flip);
+			s->setCameraOff(st.micOnly);
 			s->remember(st);
 		}
+	for (auto *m : mics_)
+		if (m->device() == device)
+			m->remember(st);
 }
 
 void Hub::deliverConnected(const std::string &device, bool on)
@@ -516,11 +564,44 @@ void Hub::deliverConnected(const std::string &device, bool on)
 
 std::string Hub::restoreFor(const std::string &device)
 {
-	std::lock_guard<std::mutex> l(m_);
-	for (auto *s : sources_)
-		if (s->device() == device)
-			return s->restoreJson();
-	return "{}";
+	json j = json::object();
+	obs_weak_source_t *mic = nullptr;
+	std::string micJson;
+	{
+		std::lock_guard<std::mutex> l(m_);
+		for (auto *s : sources_)
+			if (s->device() == device) {
+				j = json::parse(s->restoreJson(), nullptr, false);
+				break;
+			}
+		for (auto *m : mics_)
+			if (m->device() == device) {
+				mic = obs_source_get_weak_source(m->obs());
+				if (m->hasMemory())
+					micJson = m->restoreJson();
+				break;
+			}
+	}
+	if (!j.is_object())
+		j = json::object();
+	json mj = json::parse(micJson.empty() ? "null" : micJson, nullptr, false);
+	if (mj.is_object()) {
+		for (auto &[k, v] : mj.items())
+			j[k] = v;
+	} else {
+		// No mic settings yet: the first phone is the main mic, heard in every scene; a phone
+		// paired after it starts with its mic off (it's the extra camera until told otherwise).
+		bool main = !routing::anyEveryScene();
+		if (mic) {
+			obs_source_t *src = obs_weak_source_get_source(mic);
+			main = main || routing::isEveryScene(src);
+			obs_source_release(src);
+		}
+		j["mic"] = main;
+	}
+	if (mic)
+		obs_weak_source_release(mic);
+	return j.dump();
 }
 
 /**
@@ -566,14 +647,68 @@ static void createSourceFor(const std::string &device, const std::string &name)
 	obs_log(LOG_INFO, "added source '%s' for a new phone", n.c_str());
 }
 
+static std::string freeName(const std::string &base)
+{
+	std::string n = base;
+	for (int i = 2;; i++) {
+		obs_source_t *e = obs_get_source_by_name(n.c_str());
+		if (!e)
+			return n;
+		obs_source_release(e);
+		n = base + " " + std::to_string(i);
+	}
+}
+
+/**
+ * Gives a phone its own mic source. The first phone's mic is heard in every scene (it's the main
+ * mic); a later phone's goes into the current scene, muted by restoreFor until it's turned on.
+ * A Phone Mic source added by hand with no phone picked takes the phone instead. UI thread.
+ */
+static void ensureMicFor(const std::string &device, const std::string &name)
+{
+	if (obs_source_t *have = Hub::get().micSource(device)) {
+		obs_source_release(have);
+		return;
+	}
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "device", device.c_str());
+	if (obs_source_t *unassigned = Hub::get().micSource("")) {
+		obs_source_update(unassigned, s);
+		obs_data_release(s);
+		obs_log(LOG_INFO, "a new phone took the unassigned mic source '%s'", obs_source_get_name(unassigned));
+		obs_source_release(unassigned);
+		return;
+	}
+	const std::string n = freeName("Phone Mic - " + (name.empty() ? std::string("phone") : name));
+	obs_source_t *src = obs_source_create(kMicSourceId, n.c_str(), s, nullptr);
+	obs_data_release(s);
+	if (!src)
+		return;
+	if (!routing::anyEveryScene())
+		routing::setEveryScene(src, true);
+	else
+		routing::addToCurrentScene(src);
+	obs_source_release(src);
+	obs_log(LOG_INFO, "added mic source '%s'", n.c_str());
+}
+
 void Hub::ensureSource(const std::string &device, const std::string &name)
 {
 	obs_weak_source_t *unassigned = nullptr;
 	{
 		std::lock_guard<std::mutex> l(m_);
+		bool hasCam = false, hasMic = false;
 		for (auto *s : sources_)
-			if (s->device() == device)
-				return;
+			hasCam = hasCam || s->device() == device;
+		for (auto *m : mics_)
+			hasMic = hasMic || m->device() == device;
+		if (hasCam && hasMic)
+			return;
+		if (hasCam) {
+			QMetaObject::invokeMethod(QCoreApplication::instance(), [device, name] { ensureMicFor(device, name); },
+						  Qt::QueuedConnection);
+			return;
+		}
 		// A source the owner added by hand with no phone picked: the next phone takes it, so a
 		// first pairing never leaves a dead source beside an auto-added one.
 		for (auto *s : sources_)
@@ -585,6 +720,7 @@ void Hub::ensureSource(const std::string &device, const std::string &name)
 	QMetaObject::invokeMethod(
 		QCoreApplication::instance(),
 		[device, name, unassigned] {
+			ensureMicFor(device, name);
 			if (unassigned) {
 				obs_source_t *src = obs_weak_source_get_source(unassigned);
 				obs_weak_source_release(unassigned);

@@ -28,7 +28,7 @@ PhoneSource::PhoneSource(obs_data_t *settings, obs_source_t *source) : source_(s
 			rMirror_ = j.value("mirror", false);
 			rFlip_ = j.value("flip", false);
 			rLock_ = j.value("lock", false);
-			rMic_ = j.value("mic", true);
+			rMicOnly_ = j.value("micOnly", false);
 			if (j.contains("zooms") && j["zooms"].is_object())
 				for (auto &[k, v] : j["zooms"].items())
 					if (v.is_number())
@@ -72,8 +72,8 @@ void PhoneSource::save(obs_data_t *settings)
 	std::lock_guard<std::mutex> l(m_);
 	if (!remembered_)
 		return;
-	json j = {{"cam", cam_},       {"mode", mode_},  {"codec", codec_}, {"mirror", rMirror_},
-		  {"flip", rFlip_},    {"lock", rLock_}, {"mic", rMic_},    {"zooms", zooms_}};
+	json j = {{"cam", cam_},    {"mode", mode_},  {"codec", codec_},       {"mirror", rMirror_},
+		  {"flip", rFlip_}, {"lock", rLock_}, {"micOnly", rMicOnly_}, {"zooms", zooms_}};
 	obs_data_set_string(settings, "remembered", j.dump().c_str());
 }
 
@@ -107,7 +107,7 @@ void PhoneSource::remember(const State &s)
 	rMirror_ = s.mirror;
 	rFlip_ = s.flip;
 	rLock_ = s.lock;
-	rMic_ = s.mic;
+	rMicOnly_ = s.micOnly;
 }
 
 void PhoneSource::setConnected(bool on)
@@ -116,12 +116,18 @@ void PhoneSource::setConnected(bool on)
 	connected_ = on;
 }
 
+void PhoneSource::setCameraOff(bool off)
+{
+	std::lock_guard<std::mutex> l(m_);
+	cameraOff_ = off;
+}
+
 std::string PhoneSource::restoreJson()
 {
 	std::lock_guard<std::mutex> l(m_);
 	if (!remembered_)
 		return "{}";
-	json j = {{"mirror", rMirror_}, {"flip", rFlip_}, {"lock", rLock_}, {"mic", rMic_}};
+	json j = {{"mirror", rMirror_}, {"flip", rFlip_}, {"lock", rLock_}, {"micOnly", rMicOnly_}};
 	if (!cam_.empty())
 		j["cam"] = cam_;
 	if (!mode_.empty())
@@ -148,7 +154,7 @@ uint32_t PhoneSource::height()
 void PhoneSource::render(gs_effect_t *)
 {
 	int rot;
-	bool mirror, flip, connected;
+	bool mirror, flip, connected, off;
 	{
 		std::lock_guard<std::mutex> l(m_);
 		if (hasPending_ && pending_.width > 0) {
@@ -168,8 +174,9 @@ void PhoneSource::render(gs_effect_t *)
 		mirror = mirror_;
 		flip = flip_;
 		connected = connected_;
+		off = cameraOff_;
 	}
-	if (!tex_ || !connected)
+	if (!tex_ || !connected || off)
 		return;
 
 	const float tw = float(tw_), th = float(th_);
@@ -249,8 +256,8 @@ void PhoneSource::registerSource()
 	static obs_source_info info = {};
 	info.id = kSourceId;
 	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB |
-			    OBS_SOURCE_DO_NOT_DUPLICATE;
+	// No OBS_SOURCE_AUDIO: the mic is its own source, so it can stay on while another camera shows.
+	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB | OBS_SOURCE_DO_NOT_DUPLICATE;
 	info.icon_type = OBS_ICON_TYPE_CAMERA;
 	info.get_name = [](void *) { return obs_module_text("PhoneCamera"); };
 	info.create = [](obs_data_t *s, obs_source_t *src) -> void * { return new PhoneSource(s, src); };

@@ -94,11 +94,20 @@ struct Cam {
 	bool canZoom() const { return max > min + 1e-3; }
 };
 
+/** An audio input the phone has right now (its id only means something to that phone). */
+struct MicInput {
+	std::string id, label;
+};
+
 struct Caps {
 	std::string device;
 	std::vector<Cam> cams;
 	std::vector<std::string> codecs;
 	bool mic = false;
+	std::vector<MicInput> mics;
+	/** Voice clean-up effects the phone has: "ns", "aec", "agc". */
+	std::vector<std::string> clean;
+	bool hasClean(const std::string &k) const;
 	const Cam *cam(const std::string &id) const;
 	static Caps fromJson(const std::string &json);
 };
@@ -110,6 +119,8 @@ struct State {
 	bool torch = false, mic = false, mirror = false, flip = false, lock = false, live = false;
 	int rot = 0, battery = -1;
 	double temp = 0;
+	std::string micIn;
+	bool ns = false, aec = false, agc = false, micOnly = false;
 	static State fromJson(const std::string &json);
 };
 

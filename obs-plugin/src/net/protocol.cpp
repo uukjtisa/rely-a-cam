@@ -202,6 +202,14 @@ Caps Caps::fromJson(const std::string &text)
 		return c;
 	c.device = j.value("device", "");
 	c.mic = j.value("mic", false);
+	if (j.contains("mics") && j["mics"].is_array())
+		for (auto &o : j["mics"])
+			if (o.is_object())
+				c.mics.push_back({o.value("id", ""), o.value("label", "")});
+	if (j.contains("clean") && j["clean"].is_array())
+		for (auto &x : j["clean"])
+			if (x.is_string())
+				c.clean.push_back(x.get<std::string>());
 	if (j.contains("codecs") && j["codecs"].is_array())
 		for (auto &x : j["codecs"])
 			if (x.is_string())
@@ -248,7 +256,20 @@ State State::fromJson(const std::string &text)
 	s.temp = j.value("temp", 0.0);
 	s.battery = j.value("battery", -1);
 	s.live = j.value("live", false);
+	s.micIn = j.value("micIn", "");
+	s.ns = j.value("ns", false);
+	s.aec = j.value("aec", false);
+	s.agc = j.value("agc", false);
+	s.micOnly = j.value("micOnly", false);
 	return s;
+}
+
+bool Caps::hasClean(const std::string &k) const
+{
+	for (auto &c : clean)
+		if (c == k)
+			return true;
+	return false;
 }
 
 std::vector<double> presets(double min, double max, const std::vector<double> &lenses)

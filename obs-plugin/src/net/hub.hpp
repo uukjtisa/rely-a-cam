@@ -7,6 +7,8 @@
 #include "protocol.hpp"
 #include "../decode/decoder.hpp"
 
+#include <obs.h>
+
 #include <QImage>
 #include <QObject>
 #include <QString>
@@ -29,6 +31,7 @@ class QThread;
 namespace rac {
 
 class PhoneSource;
+class PhoneMic;
 
 /** What the dock shows about one phone (a copy; safe to keep). */
 struct PhoneView {
@@ -75,7 +78,13 @@ public:
 	// Sources register themselves; links find their source by the phone's device id.
 	void registerSource(PhoneSource *s);
 	void unregisterSource(PhoneSource *s);
+	void registerMic(PhoneMic *m);
+	void unregisterMic(PhoneMic *m);
 	void sourceChanged();
+	/** The phone's mic source, with a reference the caller releases; null when it has none. */
+	obs_source_t *micSource(const std::string &device) const;
+	/** The loudest sample (0..1) heard from the phone since the last call; for the dock's meter. */
+	float takePeak(const std::string &device);
 
 	// From links (hub or decode threads).
 	void deliverPicture(const std::string &device, Picture &p);
@@ -117,6 +126,8 @@ private:
 	mutable std::mutex m_;
 	std::map<std::string, PhoneView> views_;
 	std::vector<PhoneSource *> sources_;
+	std::vector<PhoneMic *> mics_;
+	std::map<std::string, float> peaks_;
 	std::map<std::string, PhoneLink *> links_;
 	std::string code_;
 	std::atomic<bool> previewWanted_{true};

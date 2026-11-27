@@ -85,8 +85,16 @@ wins on reconnect.
 {"device":"nova 10",
  "cams":[{"id":"4","facing":"back","label":"Back","min":0.65,"max":10.0,"lenses":[0.65,1.0],
           "flash":true,"modes":["1280x720@30","1920x1080@30","3840x2160@30"]}],
- "codecs":["h264","hevc"],"mic":true}
+ "codecs":["h264","hevc"],"mic":true,
+ "mics":[{"id":"15:bottom","label":"Bottom mic"},{"id":"15:back","label":"Back mic"}],
+ "clean":["ns","aec","agc"]}
 ```
+
+- `mics` lists the audio inputs the phone has right now: its built-in mics, plus a wired, USB or
+  Bluetooth input while one is connected. The phone sends a new CAPS when that list changes.
+  An `id` is only meaningful to the phone that sent it.
+- `clean` lists the voice clean-up effects the phone has: `ns` (noise suppression), `aec` (echo
+  cancellation), `agc` (automatic gain control). An effect not listed can't be turned on.
 
 Nothing about a camera exists on the PC unless it is in this report. Presets are derived from it
 the same way on both sides:
@@ -98,8 +106,14 @@ the same way on both sides:
 
 ```json
 {"cam":"4","zoom":2.4,"torch":false,"mic":true,"mode":"1920x1080@30","codec":"h264",
- "rot":90,"mirror":false,"flip":false,"lock":false,"temp":41.2,"battery":78,"live":true}
+ "rot":90,"mirror":false,"flip":false,"lock":false,"temp":41.2,"battery":78,"live":true,
+ "micIn":"15:bottom","ns":true,"aec":false,"agc":false,"micOnly":false}
 ```
+
+- `micIn` is the input in use, from `mics`. `ns`, `aec` and `agc` say which clean-up effects are
+  on.
+- `micOnly` means the camera is off and only the mic streams: no VIDEO frames arrive, and the PC
+  shows nothing for that camera until it's false again.
 
 - `zoom` is the zoom the camera is at now, which is not necessarily the last one requested. The
   phone owns it.

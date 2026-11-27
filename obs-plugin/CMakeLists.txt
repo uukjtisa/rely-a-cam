@@ -49,6 +49,8 @@ target_sources(
     src/net/hub.cpp
     src/decode/decoder.cpp
     src/source/phone-source.cpp
+    src/source/phone-mic.cpp
+    src/audio/routing.cpp
     src/dock/dock.cpp
     src/sys/system.cpp
     src/third_party/qrcodegen/qrcodegen.cpp

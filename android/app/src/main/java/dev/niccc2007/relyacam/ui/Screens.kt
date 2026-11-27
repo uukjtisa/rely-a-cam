@@ -13,6 +13,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -39,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -179,30 +182,34 @@ private fun CodeDialog(done: (String?) -> Unit) {
 
 @Composable
 private fun LiveScreen(s: UiState) {
-    var quality by remember { mutableStateOf(false) }
+    var setup by remember { mutableStateOf(false) }
     val cam = s.cam ?: return
     Box(Modifier.fillMaxSize()) {
         CameraView(s, applyMirror = true)
+        if (s.micOnly) MicOnlyScreen(s)
         Box(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
             Column(Modifier.align(Alignment.TopStart), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (s.reconnecting) Pill("Reconnecting to ${s.pcName}…", dot = Palette.yellow)
                 else Pill("Live to OBS · ${s.transport} · ${s.pcName}", dot = Palette.red)
-                Pill(statusLine(s))
+                Pill(statusLine(s) + " · ⚙ Setup", Modifier.clickable { setup = true })
             }
             Column(
                 Modifier.align(Alignment.CenterEnd).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (cam.flash) RailButton("Torch", on = s.torch) { Engine.apply(Cmd(torch = !s.torch)) }
-                if (s.cams.size > 1) RailButton("Camera\n" + nextCam(s).label.take(7)) { Engine.apply(Cmd(cam = nextCam(s).id)) }
+                // With the camera off, only what still works stays on the rail (DESIGN.md rule 7).
+                if (!s.micOnly && cam.flash) RailButton("Torch", on = s.torch) { Engine.apply(Cmd(torch = !s.torch)) }
+                if (!s.micOnly && s.cams.size > 1) RailButton("Camera\n" + nextCam(s).label.take(7)) { Engine.apply(Cmd(cam = nextCam(s).id)) }
                 RailButton(if (s.mic) "Mic" else "Mic\noff", on = s.mic, enabled = s.micAllowed) { Engine.apply(Cmd(mic = !s.mic)) }
-                RailButton("Mirror", on = s.mirror) { Engine.apply(Cmd(mirror = !s.mirror)) }
-                RailButton("Flip", on = s.flip) { Engine.apply(Cmd(flip = !s.flip)) }
-                RailButton(if (s.lock) "Locked" else "Lock\nturn", on = s.lock) { Engine.apply(Cmd(lock = !s.lock)) }
-                RailButton("Quality") { quality = true }
+                if (!s.micOnly) {
+                    RailButton("Mirror", on = s.mirror) { Engine.apply(Cmd(mirror = !s.mirror)) }
+                    RailButton("Flip", on = s.flip) { Engine.apply(Cmd(flip = !s.flip)) }
+                    RailButton(if (s.lock) "Locked" else "Lock\nturn", on = s.lock) { Engine.apply(Cmd(lock = !s.lock)) }
+                }
+                RailButton("Setup") { setup = true }
                 RailButton("Dark") { Engine.setBlack(true) }
             }
-            Column(
+            if (!s.micOnly) Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.7f),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -215,9 +222,96 @@ private fun LiveScreen(s: UiState) {
                 Primary("Stop") { Engine.stop() }
             }
         }
+        if (setup) SetupSheet(s) { setup = false }
         if (s.black) BlackScreen(s)
     }
-    if (quality) QualityDialog(s) { quality = false }
+}
+
+/** Mic only: the camera is off, so the screen shows the mic instead of a frozen picture. */
+@Composable
+private fun MicOnlyScreen(s: UiState) {
+    val lvl by Engine.level.collectAsState()
+    val input = s.mics.firstOrNull { it.id == s.micIn }?.label ?: "Phone mic"
+    Column(
+        Modifier.fillMaxSize().background(Palette.bg).padding(horizontal = 80.dp),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Mic only", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(if (s.mic) "Camera off · $input" else "Camera off · mic muted", color = Palette.muted, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
+        Meter(lvl.peak, lvl.clip, Modifier.fillMaxWidth(0.6f), height = 10.dp)
+        Spacer(Modifier.height(18.dp))
+        Primary("Turn the camera back on") { Engine.apply(Cmd(micOnly = false)) }
+    }
+}
+
+private val CLEAN_LABEL = mapOf("ns" to "Noise", "aec" to "Echo", "agc" to "Auto gain")
+
+/**
+ * Setup: the mic (input, clean-up, meter, mic only) and the video quality. The dock in OBS has the
+ * same mic controls; both send the same requests, so they always agree.
+ */
+@Composable
+private fun SetupSheet(s: UiState, close: () -> Unit) {
+    val lvl by Engine.level.collectAsState()
+    val cam = s.cam
+    val muted = { t: String -> @Composable { Text(t, color = Palette.muted, fontSize = 12.sp) } }
+    Box(
+        Modifier.fillMaxSize().background(Palette.panel)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+    ) {
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Setup", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Primary("Done") { close() }
+            }
+            SectionTitle("Mic")
+            SheetRow(
+                when { !s.micAllowed -> "Mic not allowed"; s.mic -> "Mic on"; else -> "Mic muted" },
+                on = s.mic && s.micAllowed, enabled = s.micAllowed, onClick = { Engine.apply(Cmd(mic = !s.mic)) },
+            ) { Meter(lvl.peak, lvl.clip, Modifier.width(180.dp)) }
+            if (!s.micAllowed) muted("Allow the microphone in Android Settings → Apps → Rely-A-Cam → Permissions, then come back.")()
+            s.mics.forEach { m ->
+                val inUse = m.id == s.micIn
+                SheetRow(m.label, on = inUse, onClick = { Engine.apply(Cmd(micIn = m.id)) }) { if (inUse) muted("in use")() }
+            }
+            muted("A wired, USB or Bluetooth mic shows up here as soon as it's plugged in or connected.")()
+            if (s.clean.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    s.clean.forEach { k ->
+                        val on = when (k) { "ns" -> s.ns; "aec" -> s.aec; else -> s.agc }
+                        Chip(CLEAN_LABEL[k] ?: k, selected = on) {
+                            Engine.apply(when (k) { "ns" -> Cmd(ns = !on); "aec" -> Cmd(aec = !on); else -> Cmd(agc = !on) })
+                        }
+                    }
+                }
+                muted("Clean-up: Noise cuts steady hiss and hum, Echo removes sound from a speaker nearby, Auto gain evens out loud and quiet.")()
+            }
+            SheetRow("Mic only (camera off)", on = s.micOnly, onClick = { Engine.apply(Cmd(micOnly = !s.micOnly)) }) {
+                muted(if (s.micOnly) "on" else "off")()
+            }
+            Spacer(Modifier.height(4.dp))
+            SectionTitle("Video")
+            if (cam != null) {
+                muted("What ${cam.label} can send. Higher heats the phone and needs strong Wi-Fi.")()
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    cam.modes.map { it.toString() }.forEach { m ->
+                        Chip(Mode.parse(m)?.label ?: m, selected = m == s.mode) { Engine.apply(Cmd(mode = m)) }
+                    }
+                }
+                if (s.codecs.size > 1) {
+                    muted("Codec")()
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        s.codecs.forEach { c -> Chip(c.uppercase(), selected = c == s.codec) { Engine.apply(Cmd(codec = c)) } }
+                    }
+                    muted("HEVC: same picture in less data, if the PC can decode it.")()
+                }
+            }
+        }
+    }
 }
 
 private fun nextCam(s: UiState): CameraInfo {
@@ -226,8 +320,10 @@ private fun nextCam(s: UiState): CameraInfo {
 }
 
 private fun statusLine(s: UiState): String = buildList {
-    Mode.parse(s.mode)?.let { add(it.label) }
-    add(s.codec.uppercase())
+    if (s.micOnly) add("Mic only") else {
+        Mode.parse(s.mode)?.let { add(it.label) }
+        add(s.codec.uppercase())
+    }
     if (s.kbps > 0) add("%.1f Mb/s".format(s.kbps / 1000.0))
     if (s.temp > 0) add("%.0f°C".format(s.temp))
     if (s.battery >= 0) add("${s.battery}%")
@@ -259,38 +355,6 @@ private fun ZoomSlider(cam: CameraInfo, zoom: Double) {
         )
         Text(Presets.label(cam.zoomMax), color = Color.White, fontSize = 11.sp)
     }
-}
-
-@Composable
-private fun QualityDialog(s: UiState, close: () -> Unit) {
-    val cam = s.cam ?: return
-    AlertDialog(
-        onDismissRequest = close,
-        title = { Text("Quality") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("What ${cam.label} can send. Higher heats the phone and needs strong Wi-Fi.", color = Palette.muted, fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
-                cam.modes.map { it.toString() }.forEach { m ->
-                    val sel = m == s.mode
-                    Text(
-                        (Mode.parse(m)?.label ?: m) + if (sel) "  ✓" else "",
-                        Modifier.fillMaxWidth().clickable { Engine.apply(Cmd(mode = m)); close() }.padding(vertical = 10.dp),
-                        color = if (sel) Palette.blueLight else Palette.text,
-                    )
-                }
-                if (s.codecs.size > 1) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Codec", color = Palette.muted, fontSize = 13.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        s.codecs.forEach { c -> Chip(c.uppercase(), selected = c == s.codec) { Engine.apply(Cmd(codec = c)) } }
-                    }
-                    Text("HEVC: same picture in less data, if the PC can decode it.", color = Palette.muted, fontSize = 12.sp)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = close) { Text("Done") } },
-    )
 }
 
 /** Black-screen mode: the screen stays on but shows black, with text that drifts. */

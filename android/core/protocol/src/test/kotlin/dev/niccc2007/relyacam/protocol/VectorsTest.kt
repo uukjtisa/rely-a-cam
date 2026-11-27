@@ -79,7 +79,16 @@ class VectorsTest {
     }
 
     @Test fun cmdRoundTrip() {
-        val cmd = Cmd(cam = "4", zoom = 2.4, mirror = true, zooms = mapOf("4" to 2.4, "1" to 1.0))
+        val cmd = Cmd(cam = "4", zoom = 2.4, mirror = true, zooms = mapOf("4" to 2.4, "1" to 1.0),
+            micIn = "15:back", ns = true, agc = false, micOnly = true)
         assertEquals(cmd, Cmd.fromJson(JSONObject(cmd.toJson().toString())))
+    }
+
+    @Test fun capsAndStateRoundTrip() {
+        val caps = Caps("nova 10", emptyList(), listOf("h264"), true,
+            listOf(MicInput("15:bottom", "Bottom mic"), MicInput("15:back", "Back mic")), listOf("ns", "agc"))
+        assertEquals(caps, Caps.fromJson(JSONObject(caps.toJson().toString())))
+        val st = CamState(cam = "4", micIn = "15:back", ns = true, aec = true, micOnly = true)
+        assertEquals(st, CamState.fromJson(JSONObject(st.toJson().toString())))
     }
 }

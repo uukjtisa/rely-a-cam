@@ -16,8 +16,10 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include "audio/routing.hpp"
 #include "dock/dock.hpp"
 #include "net/hub.hpp"
+#include "source/phone-mic.hpp"
 #include "source/phone-source.hpp"
 
 #include <obs-frontend-api.h>
@@ -49,6 +51,8 @@ static void onFrontendEvent(enum obs_frontend_event event, void *)
 bool obs_module_load(void)
 {
 	rac::PhoneSource::registerSource();
+	rac::PhoneMic::registerSource();
+	rac::routing::registerSaveCallback();
 	rac::Hub::get().start();
 
 	auto *main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
@@ -64,6 +68,7 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(onFrontendEvent, nullptr);
+	rac::routing::unregisterSaveCallback();
 	rac::Hub::get().stop();
 	obs_log(LOG_INFO, "unloaded");
 }

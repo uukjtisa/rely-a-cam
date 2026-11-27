@@ -53,7 +53,7 @@ $gesturesNote = if ($GesturesSetup) { @"
 **Experimental, optional: the gesture module.** **$(Split-Path $GesturesSetup -Leaf)** adds hand and face gestures to your phone cameras: pinch zoom, a pinch box, follow face, and meme reactions. It is a separate install of about 150 MB, and Rely-A-Cam works fully without it.
 "@ } else { '' }
 $notes = @"
-Rely-A-Cam $ver: a free OBS webcam plugin. Your Android phone becomes a camera in OBS Studio, with zoom synced both ways.
+Rely-A-Cam ${ver}: a free OBS webcam plugin. Your Android phone becomes a camera in OBS Studio, with zoom synced both ways.
 
 **Windows only** for now (OBS Studio 31+ on 64-bit Windows 10 or 11). A standalone app that works without OBS is coming in 0.2.0.
 

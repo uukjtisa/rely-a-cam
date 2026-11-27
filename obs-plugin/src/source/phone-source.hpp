@@ -32,6 +32,8 @@ public:
 	void setConnected(bool on);
 	/** Mic only: the phone sends no picture, so none is drawn. */
 	void setCameraOff(bool off);
+	/** The rule-of-thirds grid on the output (the phone owns the setting; STATE `grid.out`). */
+	void setGrid(bool on);
 	/** OBS's remembered settings as a CMD-shaped JSON object (WELCOME `restore`). */
 	std::string restoreJson();
 
@@ -53,7 +55,7 @@ private:
 	gs_texture_t *tex_ = nullptr;
 	int tw_ = 0, th_ = 0;
 	int rot_ = 0;
-	bool mirror_ = false, flip_ = false, connected_ = false, cameraOff_ = false;
+	bool mirror_ = false, flip_ = false, connected_ = false, cameraOff_ = false, grid_ = false;
 
 	// Remembered for reconnects (saved with the scene collection).
 	bool remembered_ = false;

@@ -1,7 +1,13 @@
-// The "Phone Camera" dock: one widget that is layouts A, B and C at once.
-// A preview toggle gives A (with preview) or B (slim); OBS's own dock floating gives C.
-// Colours come from OBS's palette (AGENTS.md rule 5); the QR is the one exception, because a
-// scanner needs dark modules on a light background.
+// The "Phone Camera" dock, round 5 (docs/mock.html: dockControlsHTML, dockMenu, the cable dialogs).
+// Top to bottom: phone chips and "+ Add phone", one status line, the preview (or the Add phone QR
+// in its place), the slim zoom ruler, one row of icon tools (mic and its meter, torch, snapshot,
+// the menu), then a note line. Everything else lives in one menu: the ⋯ button, or right-click on
+// the preview. An option whose parent is off isn't in the menu at all. OBS's own float button
+// gives the pop-out window.
+//
+// Colours come from OBS's palette (docs/DESIGN.md rule 5). The documented exceptions: the QR (dark
+// on light, for scanners), OBS's mixer colours (meter zones, CLIP, muted-mic red), the warning
+// yellow and the note green.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
@@ -11,13 +17,14 @@
 #include <QImage>
 #include <QWidget>
 
+#include <functional>
 #include <string>
+#include <vector>
 
-class QComboBox;
 class QHBoxLayout;
 class QLabel;
+class QMenu;
 class QPushButton;
-class QSlider;
 class QStackedWidget;
 class QTimer;
 class QToolButton;
@@ -41,40 +48,83 @@ private:
 	std::string text_;
 };
 
-/** The dock's live preview: draws frames upright, predicts zoom, and takes wheel/pinch/keys. */
+/**
+ * The dock's live preview: draws frames upright, predicts zoom, draws the grid, and takes
+ * wheel/pinch/keys. Right-click asks for the dock's menu.
+ */
 class PreviewWidget : public QWidget {
 	Q_OBJECT
 public:
 	explicit PreviewWidget(QWidget *parent = nullptr);
 	void setFrame(const QImage &img) { img_ = img; update(); }
-	void setPlaceholder(const QString &t) { placeholder_ = t; update(); }
+	void setPlaceholder(const QString &t);
 	void setPose(int rot, bool mirror, bool flip);
-	/** Scale to draw the last frame at while a requested zoom is on its way (1 = none). */
-	void setPrediction(double scale, const QString &label);
+	/** Scale to draw the last frame at while a requested zoom is on its way (1 = none), and the pill. */
+	void setPrediction(double scale, const QString &pill);
+	void setGrid(bool on);
+	void setHint(const QString &hint);
 	void clear() { img_ = QImage(); update(); }
 	QSize sizeHint() const override { return {320, 180}; }
 
 signals:
 	void zoomBy(double factor);
 	void presetKey(int index);
+	void menuAt(QPoint global);
 
 protected:
 	void paintEvent(QPaintEvent *) override;
 	void wheelEvent(QWheelEvent *e) override;
 	bool event(QEvent *e) override;
 	void keyPressEvent(QKeyEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 private:
 	QImage img_;
-	QString placeholder_, label_;
+	QString placeholder_, pill_, hint_;
 	int rot_ = 0;
-	bool mirror_ = false, flip_ = false;
+	bool mirror_ = false, flip_ = false, grid_ = false;
 	double scale_ = 1;
 };
 
 /**
- * The mic level: OBS's mixer zones (green, yellow, red) and a CLIP light. The zones are the one
- * place the dock uses fixed colours besides the QR (docs/DESIGN.md).
+ * The slim zoom ruler (mock `.sruler.dk`): a log-scale track, a labelled tick at each preset and
+ * at the maximum, a small tick at each whole step between, and a handle. Drag anywhere to zoom;
+ * click a label to jump to it.
+ */
+class ZoomRuler : public QWidget {
+	Q_OBJECT
+public:
+	explicit ZoomRuler(QWidget *parent = nullptr);
+	void setCamera(double min, double max, const std::vector<double> &labels);
+	void setValue(double zoom);
+	QSize sizeHint() const override { return {240, 30}; }
+	QSize minimumSizeHint() const override { return {120, 30}; }
+
+signals:
+	void zoomTo(double zoom);
+	void zoomBy(double factor);
+
+protected:
+	void paintEvent(QPaintEvent *) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override;
+	void mouseReleaseEvent(QMouseEvent *e) override;
+	void wheelEvent(QWheelEvent *e) override;
+
+private:
+	double posOf(double z) const;
+	double zoomAt(double x) const;
+	QRectF track() const;
+
+	double min_ = 1, max_ = 1, value_ = 1;
+	std::vector<double> labels_;
+	std::vector<std::pair<QRectF, double>> hits_;
+	bool dragging_ = false;
+};
+
+/**
+ * The mic level: OBS's mixer zones (green, yellow, red) and a CLIP light. The zones are one of the
+ * places the dock uses fixed colours (docs/DESIGN.md).
  */
 class MeterWidget : public QWidget {
 	Q_OBJECT
@@ -82,7 +132,7 @@ public:
 	explicit MeterWidget(QWidget *parent = nullptr);
 	void setLevel(float peak, bool clip);
 	QSize sizeHint() const override { return {140, 16}; }
-	QSize minimumSizeHint() const override { return {70, 16}; }
+	QSize minimumSizeHint() const override { return {60, 16}; }
 
 protected:
 	void paintEvent(QPaintEvent *) override;
@@ -109,6 +159,7 @@ public:
 protected:
 	void showEvent(QShowEvent *e) override;
 	void hideEvent(QHideEvent *e) override;
+	void changeEvent(QEvent *e) override;
 
 private:
 	void rebuildPhones();
@@ -120,14 +171,21 @@ private:
 	void onPreview(const QString &device, const QImage &img);
 	void setPreviewVisible(bool on);
 	void saveConfig();
-	void message(const QString &text);
+	void message(const QString &text, bool warn = false);
 	void checkFirewall();
 	void checkForUpdate();
 	void usbConnect();
 	void usbInstall();
 	void tickMeter();
+	void styleTools();
+	void cmd(const std::string &json);
+	void showMenu(QPoint global);
+	void fillMenu(QMenu *menu);
 	void setEveryScene(bool on);
 	void setInOtherApps(bool on);
+	void setDefaultMic(bool on);
+	void installCable();
+	void removeCable();
 	const PhoneView *current() const;
 
 	std::string selected_;
@@ -144,39 +202,37 @@ private:
 	QLabel *qrHint_ = nullptr;
 	QPushButton *qrSwap_ = nullptr;
 	bool showingAppQr_ = false;
-	QWidget *controls_ = nullptr;
-	QHBoxLayout *presetRow_ = nullptr;
-	QSlider *slider_ = nullptr;
-	QLabel *minLabel_ = nullptr, *maxLabel_ = nullptr, *zoomLabel_ = nullptr;
-	QComboBox *camBox_ = nullptr, *modeBox_ = nullptr, *codecBox_ = nullptr;
-	QToolButton *torchBtn_ = nullptr, *micBtn_ = nullptr, *mirrorBtn_ = nullptr, *flipBtn_ = nullptr, *lockBtn_ = nullptr;
-	QToolButton *previewBtn_ = nullptr;
 
-	// Mic: on/off with its meter, input, clean-up, and where it's heard.
-	QWidget *micPanel_ = nullptr;
+	ZoomRuler *ruler_ = nullptr;
+	QLabel *noZoom_ = nullptr;
+	std::string rulerKey_;
+
+	// The tools row (mock `.dtools`).
+	QWidget *tools_ = nullptr;
+	QToolButton *micBtn_ = nullptr, *torchBtn_ = nullptr, *snapBtn_ = nullptr, *moreBtn_ = nullptr;
 	MeterWidget *meter_ = nullptr;
-	QComboBox *inputBox_ = nullptr;
-	QLabel *cleanLabel_ = nullptr;
-	QToolButton *nsBtn_ = nullptr, *aecBtn_ = nullptr, *agcBtn_ = nullptr;
-	QToolButton *everyBtn_ = nullptr, *micOnlyBtn_ = nullptr, *otherBtn_ = nullptr;
+	QLabel *muted_ = nullptr;
+	bool micWarn_ = false;
+
+	QWidget *alerts_ = nullptr;
+	QPushButton *firewallBtn_ = nullptr, *updateBtn_ = nullptr;
+	QLabel *note_ = nullptr;
+	QTimer *noteTimer_ = nullptr;
+
 	QTimer *meterTimer_ = nullptr;
 	float shownPeak_ = 0;
 	QElapsedTimer clipAt_;
 	bool clipped_ = false;
-	QPushButton *usbBtn_ = nullptr, *firewallBtn_ = nullptr, *updateBtn_ = nullptr;
-	QLabel *message_ = nullptr;
-	QTimer *messageTimer_ = nullptr;
 	QTimer *zoomTimer_ = nullptr;
 	QTimer *refreshTimer_ = nullptr;
-	std::string presetKey_;
 	std::string chipsKey_;
+	bool styling_ = false;
 
 	// Zoom prediction: what was asked, when, and what the phone last reported.
 	double requested_ = 0;
 	QElapsedTimer requestedAt_;
 	double pendingSend_ = 0;
 	QElapsedTimer lastSent_;
-	bool sliderDragging_ = false;
 	bool previewOn_ = true;
 	bool introduced_ = false;
 	std::string updateTag_, updateUrl_;

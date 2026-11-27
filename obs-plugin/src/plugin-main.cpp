@@ -39,13 +39,19 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 static void onFrontendEvent(enum obs_frontend_event event, void *)
 {
-	// Stop before OBS tears down: every phone gets BYE and releases its camera and mic.
-	if (event == OBS_FRONTEND_EVENT_EXIT)
+	// Stop before OBS tears down: Windows gets its default mic back, and every phone gets BYE and
+	// releases its camera and mic.
+	if (event == OBS_FRONTEND_EVENT_EXIT) {
+		rac::routing::stop();
 		rac::Hub::get().stop();
-	// OBS restores its saved dock layout after loading plugins, and a plugin dock starts hidden.
-	// Reveal it after that, once ever, so a first-time user lands on the pairing QR.
-	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING)
+	}
+	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		// The scene collection is loaded, so every mic source and its settings exist.
+		rac::routing::start();
+		// OBS restores its saved dock layout after loading plugins, and a plugin dock starts hidden.
+		// Reveal it after that, once ever, so a first-time user lands on the pairing QR.
 		QTimer::singleShot(500, [] { rac::PhoneDock::introduceOnce(); });
+	}
 }
 
 bool obs_module_load(void)
@@ -68,6 +74,7 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(onFrontendEvent, nullptr);
+	rac::routing::stop();
 	rac::routing::unregisterSaveCallback();
 	rac::Hub::get().stop();
 	obs_log(LOG_INFO, "unloaded");

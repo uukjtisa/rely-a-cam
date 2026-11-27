@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "dock.hpp"
 
+#include "../audio/cable.hpp"
 #include "../audio/routing.hpp"
 #include "../sys/system.hpp"
 #include "../third_party/qrcodegen/qrcodegen.hpp"
@@ -9,38 +10,121 @@
 #include "plugin-support.h"
 #include <util/platform.h>
 
-#include <QComboBox>
-#include <QDesktopServices>
-#include <QDockWidget>
-#include <QGridLayout>
+#include <QApplication>
+#include <QContextMenuEvent>
+#include <QDialog>
 #include <QDir>
+#include <QDockWidget>
 #include <QFile>
+#include <QFrame>
 #include <QGestureEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
+#include <QMessageBox>
+#include <QMouseEvent>
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPinchGesture>
 #include <QPointer>
 #include <QPushButton>
-#include <QSlider>
 #include <QStackedWidget>
+#include <QSvgRenderer>
 #include <QTimer>
 #include <QToolButton>
-#include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <map>
 #include <thread>
+#include <tuple>
 
 using nlohmann::json;
 
 namespace rac {
+
+// The documented fixed colours (docs/DESIGN.md rule 5): OBS's mixer and warning colours, and the
+// mock's note green.
+static const QColor kGreen(0x25, 0xA2, 0x31), kYellow(0xE5, 0xAF, 0x24), kRed(0xC0, 0x1C, 0x37);
+static const QColor kMutedBg(0x5A, 0x20, 0x30), kNoteGreen(0x5F, 0xD0, 0x6C), kNoZoomBg(0x3A, 0x2F, 0x12);
+
+// The mock's icons (docs/mock.html, IC), drawn in the button's text colour.
+static const char *const kIconMic =
+	R"(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>)";
+static const char *const kIconMicOff =
+	R"(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18"/></svg>)";
+static const char *const kIconTorch =
+	R"(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 2h10l-2 6H9z"/><path d="M9 8h6v12a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z"/><path d="M12 12v3"/></svg>)";
+static const char *const kIconShot =
+	R"(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>)";
+static const char *const kIconDots =
+	R"(<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>)";
+
+/** An SVG icon at 15 px in [color], cached (refresh() asks for the same few many times a second). */
+static QIcon svgIcon(const char *svg, const QColor &color, qreal dpr)
+{
+	static std::map<std::tuple<const void *, QRgb, int>, QIcon> cache;
+	const auto key = std::make_tuple(static_cast<const void *>(svg), color.rgba(), int(dpr * 100));
+	auto it = cache.find(key);
+	if (it != cache.end())
+		return it->second;
+	QByteArray data(svg);
+	data.replace("currentColor", color.name().toLatin1());
+	QSvgRenderer r(data);
+	QPixmap pm(QSize(15, 15) * dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	r.render(&p);
+	p.end();
+	pm.setDevicePixelRatio(dpr);
+	return cache[key] = QIcon(pm);
+}
+
+/** The chip's connection light: OBS green when connected, a ring when not. */
+static QIcon ledIcon(bool on, const QColor &off, qreal dpr)
+{
+	QPixmap pm(QSize(8, 8) * dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.scale(dpr, dpr);
+	if (on) {
+		p.setPen(Qt::NoPen);
+		p.setBrush(kGreen);
+		p.drawEllipse(QRectF(0.5, 0.5, 7, 7));
+	} else {
+		p.setPen(QPen(off, 1.2));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(QRectF(1, 1, 6, 6));
+	}
+	p.end();
+	pm.setDevicePixelRatio(dpr);
+	return QIcon(pm);
+}
+
+/** The rule-of-thirds grid, as on the phone and the output: white at 55% with a soft dark edge. */
+static void paintGrid(QPainter &p, const QRectF &box)
+{
+	p.save();
+	p.setRenderHint(QPainter::Antialiasing, false);
+	for (int pass = 0; pass < 2; pass++) {
+		p.setPen(Qt::NoPen);
+		p.setBrush(pass == 0 ? QColor(0, 0, 0, 90) : QColor(255, 255, 255, 140));
+		const double t = pass == 0 ? 3 : 1;
+		for (int i = 1; i <= 2; i++) {
+			const double x = std::round(box.left() + box.width() * i / 3.0), y = std::round(box.top() + box.height() * i / 3.0);
+			p.drawRect(QRectF(x - t / 2, box.top(), t, box.height()));
+			p.drawRect(QRectF(box.left(), y - t / 2, box.width(), t));
+		}
+	}
+	p.restore();
+}
 
 // ---- QR ----------------------------------------------------------------------------------
 
@@ -89,7 +173,15 @@ PreviewWidget::PreviewWidget(QWidget *parent) : QWidget(parent)
 	setAttribute(Qt::WA_AcceptTouchEvents);
 	grabGesture(Qt::PinchGesture);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	setToolTip("Scroll to zoom. Ctrl+scroll or pinch on a touchpad works too. Keys: + - 1-9");
+	setToolTip("Scroll to zoom. Ctrl+scroll or pinch on a touchpad works too. Keys: + - 1-9. Right-click: menu.");
+}
+
+void PreviewWidget::setPlaceholder(const QString &t)
+{
+	if (t == placeholder_)
+		return;
+	placeholder_ = t;
+	update();
 }
 
 void PreviewWidget::setPose(int rot, bool mirror, bool flip)
@@ -102,52 +194,92 @@ void PreviewWidget::setPose(int rot, bool mirror, bool flip)
 	update();
 }
 
-void PreviewWidget::setPrediction(double scale, const QString &label)
+void PreviewWidget::setPrediction(double scale, const QString &pill)
 {
+	if (scale == scale_ && pill == pill_)
+		return;
 	scale_ = scale;
-	label_ = label;
+	pill_ = pill;
+	update();
+}
+
+void PreviewWidget::setGrid(bool on)
+{
+	if (on == grid_)
+		return;
+	grid_ = on;
+	update();
+}
+
+void PreviewWidget::setHint(const QString &hint)
+{
+	if (hint == hint_)
+		return;
+	hint_ = hint;
 	update();
 }
 
 void PreviewWidget::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
+	p.setRenderHint(QPainter::Antialiasing);
 	const QPalette &pal = palette();
 	p.fillRect(rect(), pal.color(QPalette::Base));
 	if (img_.isNull()) {
 		p.setPen(pal.color(QPalette::PlaceholderText));
 		p.drawText(rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap, placeholder_);
-		return;
+	} else {
+		const bool side = rot_ % 180 != 0;
+		const double iw = img_.width(), ih = img_.height();
+		const double uw = side ? ih : iw, uh = side ? iw : ih;
+		const double fit = std::min(width() / uw, height() / uh);
+		const QRectF box((width() - uw * fit) / 2, (height() - uh * fit) / 2, uw * fit, uh * fit);
+		p.save();
+		p.setClipRect(box);
+		p.setRenderHint(QPainter::SmoothPixmapTransform);
+		p.translate(box.center());
+		p.scale(fit * scale_, fit * scale_);
+		p.scale(mirror_ ? -1 : 1, flip_ ? -1 : 1);
+		p.rotate(rot_);
+		p.drawImage(QPointF(-iw / 2, -ih / 2), img_);
+		p.restore();
+		if (grid_)
+			paintGrid(p, box);
 	}
-	const bool side = rot_ % 180 != 0;
-	const double iw = img_.width(), ih = img_.height();
-	const double uw = side ? ih : iw, uh = side ? iw : ih;
-	const double fit = std::min(width() / uw, height() / uh);
-	const QRectF box((width() - uw * fit) / 2, (height() - uh * fit) / 2, uw * fit, uh * fit);
-	p.save();
-	p.setClipRect(box);
-	p.setRenderHint(QPainter::SmoothPixmapTransform);
-	p.translate(box.center());
-	p.scale(fit * scale_, fit * scale_);
-	p.scale(mirror_ ? -1 : 1, flip_ ? -1 : 1);
-	p.rotate(rot_);
-	p.drawImage(QPointF(-iw / 2, -ih / 2), img_);
-	p.restore();
 
-	if (!label_.isEmpty()) {
+	QFont small = font();
+	small.setPixelSize(11);
+	p.setFont(small);
+	const QFontMetrics fm(small);
+	// The zoom pill, top right; a dashed yellow ring while the value shown is a prediction (mock `.zpill.pred`).
+	if (!pill_.isEmpty()) {
 		QFont f = font();
-		f.setBold(true);
+		f.setPixelSize(12);
 		p.setFont(f);
-		const QFontMetrics fm(f);
-		const int w = fm.horizontalAdvance(label_) + 16, h = fm.height() + 6;
-		const QRect pill(int(box.center().x()) - w / 2, int(box.bottom()) - h - 8, w, h);
-		QColor bg = pal.color(QPalette::Window);
-		bg.setAlpha(200);
+		const QFontMetrics pm(f);
+		const int w = pm.horizontalAdvance(pill_) + 14, h = pm.height() + 2;
+		const QRectF r(width() - 6 - w, 6, w, h);
 		p.setPen(Qt::NoPen);
-		p.setBrush(bg);
-		p.drawRoundedRect(pill, h / 2.0, h / 2.0);
-		p.setPen(pal.color(QPalette::WindowText));
-		p.drawText(pill, Qt::AlignCenter, label_);
+		p.setBrush(QColor(0, 0, 0, 187));
+		p.drawRoundedRect(r, h / 2.0, h / 2.0);
+		if (scale_ != 1) {
+			p.setPen(QPen(kYellow, 1, Qt::DashLine));
+			p.setBrush(Qt::NoBrush);
+			p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), h / 2.0 + 2, h / 2.0 + 2);
+		}
+		p.setPen(Qt::white);
+		p.drawText(r, Qt::AlignCenter, pill_);
+		p.setFont(small);
+	}
+	// The hint, bottom left (mock `.hint`).
+	if (!hint_.isEmpty()) {
+		const int w = fm.horizontalAdvance(hint_) + 12, h = fm.height() + 2;
+		const QRectF r(6, height() - 6 - h, w, h);
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(0, 0, 0, 136));
+		p.drawRoundedRect(r, 8, 8);
+		p.setPen(QColor(255, 255, 255, 204));
+		p.drawText(r, Qt::AlignCenter, hint_);
 	}
 }
 
@@ -195,6 +327,198 @@ void PreviewWidget::keyPressEvent(QKeyEvent *e)
 		QWidget::keyPressEvent(e);
 }
 
+void PreviewWidget::contextMenuEvent(QContextMenuEvent *e)
+{
+	emit menuAt(e->globalPos());
+	e->accept();
+}
+
+// ---- zoom ruler ----------------------------------------------------------------------------
+
+ZoomRuler::ZoomRuler(QWidget *parent) : QWidget(parent)
+{
+	setFixedHeight(30);
+	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	setCursor(Qt::PointingHandCursor);
+	setToolTip("Drag to zoom, or click a value");
+}
+
+void ZoomRuler::setCamera(double min, double max, const std::vector<double> &labels)
+{
+	min_ = min;
+	max_ = std::max(max, min + 1e-3);
+	labels_ = labels;
+	update();
+}
+
+void ZoomRuler::setValue(double zoom)
+{
+	if (std::fabs(zoom - value_) < 1e-4)
+		return;
+	value_ = zoom;
+	update();
+}
+
+QRectF ZoomRuler::track() const
+{
+	return QRectF(12, 8, width() - 24, 2);
+}
+
+double ZoomRuler::posOf(double z) const
+{
+	const double lo = std::log(min_), hi = std::log(max_);
+	return std::clamp((std::log(std::max(z, 1e-3)) - lo) / (hi - lo), 0.0, 1.0);
+}
+
+double ZoomRuler::zoomAt(double x) const
+{
+	const QRectF t = track();
+	const double f = std::clamp((x - t.left()) / t.width(), 0.0, 1.0);
+	return std::exp(std::log(min_) + f * (std::log(max_) - std::log(min_)));
+}
+
+void ZoomRuler::paintEvent(QPaintEvent *)
+{
+	QPainter p(this);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QPalette &pal = palette();
+	const bool on = isEnabled();
+	QColor dim = pal.color(QPalette::PlaceholderText);
+	QColor text = pal.color(QPalette::Text);
+	if (!on) {
+		dim.setAlphaF(0.5);
+		text.setAlphaF(0.5);
+	}
+	const QRectF t = track();
+	p.setPen(Qt::NoPen);
+	p.setBrush(dim);
+	p.drawRoundedRect(t, 1, 1);
+	auto xOf = [&](double z) { return t.left() + posOf(z) * t.width(); };
+	auto labelled = [&](double v) {
+		for (double l : labels_)
+			if (std::fabs(l - v) < 1e-6)
+				return true;
+		return false;
+	};
+	// Small ticks at each whole step that has no label.
+	for (double v = std::ceil(min_); v <= std::floor(max_) + 1e-9; v += 1)
+		if (!labelled(v))
+			p.fillRect(QRectF(std::round(xOf(v)), 6, 1, 6), dim);
+	QFont f = font();
+	f.setPixelSize(10);
+	f.setWeight(QFont::DemiBold);
+	p.setFont(f);
+	const QFontMetrics fm(f);
+	hits_.clear();
+	for (double v : labels_) {
+		const double x = xOf(v);
+		p.fillRect(QRectF(x - 1, 3, 2, 12), text);
+		const QString s = QString::fromStdString(zoomLabel(v));
+		const int w = fm.horizontalAdvance(s) + 6;
+		QRectF r(x - w / 2.0, 16, w, fm.height());
+		r.moveLeft(std::clamp(r.left(), 0.0, double(width()) - w));
+		p.setPen(text);
+		p.drawText(r, Qt::AlignCenter, s);
+		p.setPen(Qt::NoPen);
+		hits_.push_back({r.adjusted(-2, -2, 2, 2), v});
+	}
+	// The handle (mock `.hd`): a 14 px disc with a soft shadow.
+	const QPointF c(xOf(value_), 9);
+	p.setBrush(QColor(0, 0, 0, on ? 110 : 50));
+	p.drawEllipse(c + QPointF(0, 1), 7.5, 7.5);
+	p.setBrush(text);
+	p.drawEllipse(c, 7, 7);
+}
+
+void ZoomRuler::mousePressEvent(QMouseEvent *e)
+{
+	if (e->button() != Qt::LeftButton)
+		return;
+	for (auto &[r, v] : hits_)
+		if (r.contains(e->position())) {
+			emit zoomTo(v);
+			return;
+		}
+	dragging_ = true;
+	emit zoomTo(zoomAt(e->position().x()));
+}
+
+void ZoomRuler::mouseMoveEvent(QMouseEvent *e)
+{
+	if (dragging_)
+		emit zoomTo(zoomAt(e->position().x()));
+}
+
+void ZoomRuler::mouseReleaseEvent(QMouseEvent *)
+{
+	dragging_ = false;
+}
+
+void ZoomRuler::wheelEvent(QWheelEvent *e)
+{
+	const double steps = e->angleDelta().y() / 120.0;
+	if (steps != 0)
+		emit zoomBy(std::pow(1.12, steps));
+	e->accept();
+}
+
+// ---- mic meter -----------------------------------------------------------------------------
+
+MeterWidget::MeterWidget(QWidget *parent) : QWidget(parent)
+{
+	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	setToolTip("The phone's mic level as it arrives. CLIP lights when it's too loud: move the phone back or turn on Auto gain.");
+}
+
+void MeterWidget::setLevel(float peak, bool clip)
+{
+	if (std::fabs(peak - peak_) < 0.004f && clip == clip_)
+		return;
+	peak_ = peak;
+	clip_ = clip;
+	update();
+}
+
+void MeterWidget::paintEvent(QPaintEvent *)
+{
+	QPainter p(this);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QPalette &pal = palette();
+	const int clipW = 34;
+	const QRectF track(0, height() / 2.0 - 3, width() - clipW - 6, 6);
+	p.setPen(Qt::NoPen);
+	p.setBrush(pal.color(QPalette::Base));
+	p.drawRoundedRect(track, 3, 3);
+	// OBS's own mixer zones: green to -9 dB, yellow to -3 dB, red above (as fractions of full scale).
+	struct Zone {
+		double to;
+		QColor c;
+	};
+	const Zone zones[] = {{0.65, kGreen}, {0.85, kYellow}, {1.0, kRed}};
+	const double w = track.width() * std::clamp(double(peak_), 0.0, 1.0);
+	double from = 0;
+	p.save();
+	QPainterPath clipPath;
+	clipPath.addRoundedRect(track, 3, 3);
+	p.setClipPath(clipPath);
+	for (const Zone &z : zones) {
+		const double x0 = track.width() * from, x1 = std::min(w, track.width() * z.to);
+		if (x1 > x0)
+			p.fillRect(QRectF(track.left() + x0, track.top(), x1 - x0, track.height()), z.c);
+		from = z.to;
+	}
+	p.restore();
+	const QRectF tag(width() - clipW, height() / 2.0 - 7, clipW, 14);
+	p.setBrush(clip_ ? kRed : pal.color(QPalette::Base));
+	p.drawRoundedRect(tag, 3, 3);
+	QFont f = font();
+	f.setPixelSize(9);
+	f.setBold(true);
+	p.setFont(f);
+	p.setPen(clip_ ? QColor(Qt::white) : pal.color(QPalette::PlaceholderText));
+	p.drawText(tag, Qt::AlignCenter, "CLIP");
+}
+
 // ---- the dock ----------------------------------------------------------------------------
 
 static std::string dockConfigPath()
@@ -234,71 +558,37 @@ void PhoneDock::introduceOnce()
 	reveal(d->phones_.empty());
 }
 
-// ---- mic meter -----------------------------------------------------------------------------
-
-MeterWidget::MeterWidget(QWidget *parent) : QWidget(parent)
-{
-	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	setToolTip("The phone's mic level as it arrives. CLIP lights when it's too loud: move the phone back or turn on Auto gain.");
-}
-
-void MeterWidget::setLevel(float peak, bool clip)
-{
-	if (std::fabs(peak - peak_) < 0.004f && clip == clip_)
-		return;
-	peak_ = peak;
-	clip_ = clip;
-	update();
-}
-
-void MeterWidget::paintEvent(QPaintEvent *)
-{
-	QPainter p(this);
-	p.setRenderHint(QPainter::Antialiasing);
-	const QPalette &pal = palette();
-	const int clipW = 34;
-	const QRectF track(0, height() / 2.0 - 3, width() - clipW - 6, 6);
-	p.setPen(Qt::NoPen);
-	p.setBrush(pal.color(QPalette::Base));
-	p.drawRoundedRect(track, 3, 3);
-	// OBS's own mixer zones: green to -9 dB, yellow to -3 dB, red above (as fractions of full scale).
-	struct Zone {
-		double to;
-		QColor c;
-	};
-	const Zone zones[] = {{0.65, QColor(0x25, 0xA2, 0x31)}, {0.85, QColor(0xE5, 0xAF, 0x24)}, {1.0, QColor(0xC0, 0x1C, 0x37)}};
-	const double w = track.width() * std::clamp(double(peak_), 0.0, 1.0);
-	double from = 0;
-	p.save();
-	QPainterPath clipPath;
-	clipPath.addRoundedRect(track, 3, 3);
-	p.setClipPath(clipPath);
-	for (const Zone &z : zones) {
-		const double x0 = track.width() * from, x1 = std::min(w, track.width() * z.to);
-		if (x1 > x0)
-			p.fillRect(QRectF(track.left() + x0, track.top(), x1 - x0, track.height()), z.c);
-		from = z.to;
-	}
-	p.restore();
-	const QRectF tag(width() - clipW, height() / 2.0 - 7, clipW, 14);
-	p.setBrush(clip_ ? QColor(0xC0, 0x1C, 0x37) : pal.color(QPalette::Base));
-	p.drawRoundedRect(tag, 3, 3);
-	QFont f = font();
-	f.setPixelSize(9);
-	f.setBold(true);
-	p.setFont(f);
-	p.setPen(clip_ ? QColor(Qt::white) : pal.color(QPalette::PlaceholderText));
-	p.drawText(tag, Qt::AlignCenter, "CLIP");
-}
-
-static QToolButton *toggle(const QString &text, const QString &tip)
+static QToolButton *iconButton(const QString &tip, bool checkable)
 {
 	auto *b = new QToolButton();
-	b->setText(text);
 	b->setToolTip(tip);
-	b->setCheckable(true);
-	b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	b->setCheckable(checkable);
+	b->setFixedSize(28, 26);
+	b->setIconSize(QSize(15, 15));
+	b->setToolButtonStyle(Qt::ToolButtonIconOnly);
+	b->setFocusPolicy(Qt::TabFocus);
 	return b;
+}
+
+/** "1080p30" for the status line (the mock's compact form). */
+static QString compactMode(const std::string &mode)
+{
+	return QString::fromStdString(modeLabel(mode)).remove(' ');
+}
+
+/** "hot: try 1080p" (PROTOCOL.md, Heat), worded as on the phone: the rate only when it changes. */
+static QString heatHint(const Cam *c, const std::string &mode)
+{
+	const std::string next = c ? heatSuggestion(c->modes, mode) : std::string();
+	if (next.empty())
+		return "hot";
+	auto fps = [](const std::string &m) {
+		const auto at = m.find('@');
+		return at == std::string::npos ? std::string() : m.substr(at + 1);
+	};
+	QString label = QString::fromStdString(modeLabel(next));
+	label = fps(next) == fps(mode) ? label.section(' ', 0, 0) : label.remove(' ');
+	return "hot: try " + label;
 }
 
 PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
@@ -308,19 +598,28 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	root->setContentsMargins(6, 6, 6, 6);
 	root->setSpacing(6);
 
-	// Phones row: one chip per phone, then "+ Add phone".
+	// Phones: one chip per phone, then "+ Add phone".
 	auto *top = new QHBoxLayout();
+	top->setSpacing(4);
 	chipRow_ = new QHBoxLayout();
 	chipRow_->setSpacing(4);
 	top->addLayout(chipRow_);
-	top->addStretch(1);
 	addBtn_ = new QPushButton("+ Add phone");
 	addBtn_->setCheckable(true);
+	addBtn_->setToolTip("Show the QR to pair a phone");
 	top->addWidget(addBtn_);
+	top->addStretch(1);
 	root->addLayout(top);
 
+	// One status line (mock `.dline`).
 	status_ = new QLabel();
 	status_->setWordWrap(true);
+	status_->setTextFormat(Qt::RichText);
+	{
+		QFont f = status_->font();
+		f.setPixelSize(12);
+		status_->setFont(f);
+	}
 	root->addWidget(status_);
 
 	// Preview, or the Add phone panel in its place.
@@ -346,120 +645,77 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	auto *apButtons = new QHBoxLayout();
 	qrSwap_ = new QPushButton("No app on the phone?");
 	auto *usbInstall = new QPushButton("Install app over USB");
+	auto *usbPair = new QPushButton("Connect over USB");
+	usbPair->setToolTip("Connect the phone plugged in by USB");
 	apButtons->addWidget(qrSwap_);
 	apButtons->addWidget(usbInstall);
+	apButtons->addWidget(usbPair);
 	ap->addLayout(apButtons);
 	stack_->addWidget(addPanel_);
 	root->addWidget(stack_, 1);
 
-	// Zoom: presets, then the log-scale slider labelled with the phone's own range.
-	controls_ = new QWidget();
-	auto *cl = new QVBoxLayout(controls_);
-	cl->setContentsMargins(0, 0, 0, 0);
-	cl->setSpacing(6);
-	presetRow_ = new QHBoxLayout();
-	presetRow_->setSpacing(4);
-	cl->addLayout(presetRow_);
-	auto *zr = new QHBoxLayout();
-	minLabel_ = new QLabel();
-	maxLabel_ = new QLabel();
-	zoomLabel_ = new QLabel();
-	zoomLabel_->setMinimumWidth(48);
-	zoomLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-	slider_ = new QSlider(Qt::Horizontal);
-	slider_->setRange(0, 1000);
-	zr->addWidget(minLabel_);
-	zr->addWidget(slider_, 1);
-	zr->addWidget(maxLabel_);
-	zr->addWidget(zoomLabel_);
-	cl->addLayout(zr);
+	// The slim ruler, or why there's none.
+	ruler_ = new ZoomRuler();
+	root->addWidget(ruler_);
+	noZoom_ = new QLabel();
+	noZoom_->setAutoFillBackground(true);
+	{
+		QPalette p = noZoom_->palette();
+		p.setColor(QPalette::Window, kNoZoomBg);
+		p.setColor(QPalette::WindowText, kYellow);
+		noZoom_->setPalette(p);
+		noZoom_->setContentsMargins(8, 4, 8, 4);
+		QFont f = noZoom_->font();
+		f.setPixelSize(12);
+		noZoom_->setFont(f);
+	}
+	root->addWidget(noZoom_);
 
-	auto *r1 = new QHBoxLayout();
-	camBox_ = new QComboBox();
-	camBox_->setToolTip("Camera");
-	torchBtn_ = toggle("Torch", "Torch on the phone");
-	r1->addWidget(camBox_, 1);
-	r1->addWidget(torchBtn_);
-	cl->addLayout(r1);
-
-	auto *r2 = new QHBoxLayout();
-	modeBox_ = new QComboBox();
-	modeBox_->setToolTip("Quality: only what this phone's camera can send");
-	codecBox_ = new QComboBox();
-	codecBox_->setToolTip("Codec");
-	mirrorBtn_ = toggle("Mirror", "Mirror left-right");
-	flipBtn_ = toggle("Flip", "Flip upside-down");
-	lockBtn_ = toggle("Lock", "Lock orientation: stop following the phone's turning");
-	r2->addWidget(modeBox_, 1);
-	r2->addWidget(codecBox_);
-	r2->addWidget(mirrorBtn_);
-	r2->addWidget(flipBtn_);
-	r2->addWidget(lockBtn_);
-	cl->addLayout(r2);
-	root->addWidget(controls_);
-
-	// Mic: a block of its own, because Every scene and Use in other apps are about the OBS
-	// source and still work while the phone is offline (docs/mock.html, round 4).
-	micPanel_ = new QWidget();
-	auto *mg = new QGridLayout(micPanel_);
-	mg->setContentsMargins(0, 0, 0, 0);
-	mg->setHorizontalSpacing(6);
-	mg->setVerticalSpacing(6);
-	mg->setColumnStretch(1, 1);
-	micBtn_ = toggle("Mic", "Mute or unmute this phone's mic");
+	// The tools row (mock `.dtools`): mic and its meter, torch, snapshot, the menu.
+	tools_ = new QWidget();
+	auto *tl = new QHBoxLayout(tools_);
+	tl->setContentsMargins(0, 0, 0, 0);
+	tl->setSpacing(6);
+	micBtn_ = iconButton("Mic on: click to mute", true);
 	meter_ = new MeterWidget();
-	auto *m0 = new QHBoxLayout();
-	m0->addWidget(micBtn_);
-	m0->addWidget(meter_, 1);
-	mg->addWidget(new QLabel("Mic"), 0, 0);
-	mg->addLayout(m0, 0, 1);
-	inputBox_ = new QComboBox();
-	inputBox_->setToolTip("Which of the phone's mics to use. A wired, USB or Bluetooth mic shows up here once it's connected to the phone.");
-	mg->addWidget(new QLabel("Input"), 1, 0);
-	mg->addWidget(inputBox_, 1, 1);
-	nsBtn_ = toggle("Noise", "Noise suppression: cuts steady hiss and hum");
-	aecBtn_ = toggle("Echo", "Echo cancellation: removes sound from a speaker near the phone");
-	agcBtn_ = toggle("Auto gain", "Automatic gain: evens out loud and quiet, and keeps it from clipping");
-	auto *m2 = new QHBoxLayout();
-	m2->addWidget(nsBtn_);
-	m2->addWidget(aecBtn_);
-	m2->addWidget(agcBtn_);
-	m2->addStretch(1);
-	cleanLabel_ = new QLabel("Clean-up");
-	mg->addWidget(cleanLabel_, 2, 0);
-	mg->addLayout(m2, 2, 1);
-	everyBtn_ = toggle("Every scene", "Hear this mic in every scene, like OBS's own Mic/Aux, so switching scenes or cameras never cuts it");
-	micOnlyBtn_ = toggle("Mic only", "Turn the phone's camera off and send only its mic");
-	otherBtn_ = toggle("Use in other apps", "Use this mic in Chrome, Discord or Zoom, through the free VB-Audio Virtual Cable");
-	auto *m3 = new QHBoxLayout();
-	m3->addWidget(everyBtn_);
-	m3->addWidget(micOnlyBtn_);
-	m3->addWidget(otherBtn_);
-	m3->addStretch(1);
-	mg->addWidget(new QLabel("Route"), 3, 0);
-	mg->addLayout(m3, 3, 1);
-	root->addWidget(micPanel_);
+	muted_ = new QLabel("mic muted");
+	muted_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	torchBtn_ = iconButton("Torch", true);
+	snapBtn_ = iconButton("Snapshot", false);
+	moreBtn_ = iconButton("Camera, quality, picture, mic, overlays", false);
+	tl->addWidget(micBtn_);
+	tl->addWidget(meter_, 1);
+	tl->addWidget(muted_, 1);
+	tl->addWidget(torchBtn_);
+	tl->addWidget(snapBtn_);
+	tl->addWidget(moreBtn_);
+	root->addWidget(tools_);
 
-	auto *foot = new QHBoxLayout();
-	previewBtn_ = toggle("Preview", "Show the preview (turn off for a slim dock)");
-	usbBtn_ = new QPushButton("USB");
-	usbBtn_->setToolTip("Connect the phone plugged in by USB");
+	// Shown only when something needs doing.
+	alerts_ = new QWidget();
+	auto *al = new QHBoxLayout(alerts_);
+	al->setContentsMargins(0, 0, 0, 0);
 	firewallBtn_ = new QPushButton("Allow phones");
 	firewallBtn_->setToolTip("Windows Firewall has no rule for Rely-A-Cam, so phones may be blocked. This adds it.");
 	firewallBtn_->hide();
 	updateBtn_ = new QPushButton();
 	updateBtn_->hide();
-	foot->addWidget(previewBtn_);
-	foot->addWidget(usbBtn_);
-	foot->addWidget(firewallBtn_);
-	foot->addStretch(1);
-	foot->addWidget(updateBtn_);
-	root->addLayout(foot);
+	al->addWidget(firewallBtn_);
+	al->addStretch(1);
+	al->addWidget(updateBtn_);
+	alerts_->hide();
+	root->addWidget(alerts_);
 
-	message_ = new QLabel();
-	message_->setWordWrap(true);
-	message_->hide();
-	root->addWidget(message_);
+	// The note line (mock `.dnote`): room kept for it, so the dock doesn't jump.
+	note_ = new QLabel();
+	note_->setWordWrap(true);
+	note_->setMinimumHeight(16);
+	{
+		QFont f = note_->font();
+		f.setPixelSize(12);
+		note_->setFont(f);
+	}
+	root->addWidget(note_);
 
 	// Saved preview toggle.
 	{
@@ -472,8 +728,6 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 			}
 		}
 	}
-	previewBtn_->setChecked(previewOn_);
-	setPreviewVisible(previewOn_);
 
 	zoomTimer_ = new QTimer(this);
 	zoomTimer_->setSingleShot(true);
@@ -485,9 +739,9 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 	connect(meterTimer_, &QTimer::timeout, this, &PhoneDock::tickMeter);
 	meterTimer_->start(50);
 	clipAt_.start();
-	messageTimer_ = new QTimer(this);
-	messageTimer_->setSingleShot(true);
-	connect(messageTimer_, &QTimer::timeout, message_, &QLabel::hide);
+	noteTimer_ = new QTimer(this);
+	noteTimer_->setSingleShot(true);
+	connect(noteTimer_, &QTimer::timeout, note_, &QLabel::clear);
 	lastSent_.start();
 	requestedAt_.start();
 
@@ -498,58 +752,34 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 			refreshTimer_->start(40);
 	});
 	connect(&hub, &Hub::preview, this, &PhoneDock::onPreview);
-	connect(&hub, &Hub::message, this, &PhoneDock::message);
+	connect(&hub, &Hub::message, this, [this](const QString &t) { message(t); });
 	connect(addBtn_, &QPushButton::toggled, this, &PhoneDock::showAddPanel);
 	connect(qrSwap_, &QPushButton::clicked, this, [this] {
 		showingAppQr_ = !showingAppQr_;
 		showAddPanel(true);
 	});
 	connect(usbInstall, &QPushButton::clicked, this, &PhoneDock::usbInstall);
-	connect(preview_, &PreviewWidget::zoomBy, this, [this](double f) {
+	connect(usbPair, &QPushButton::clicked, this, &PhoneDock::usbConnect);
+	auto zoomBy = [this](double f) {
 		const PhoneView *v = current();
 		if (!v)
 			return;
 		const double base = requested_ > 0 ? requested_ : v->state.zoom;
 		requestZoom(base * f);
-	});
+	};
+	connect(preview_, &PreviewWidget::zoomBy, this, zoomBy);
+	connect(ruler_, &ZoomRuler::zoomBy, this, zoomBy);
+	connect(ruler_, &ZoomRuler::zoomTo, this, &PhoneDock::requestZoom);
 	connect(preview_, &PreviewWidget::presetKey, this, [this](int i) { Hub::get().preset(selected_, i); });
-	connect(slider_, &QSlider::sliderPressed, this, [this] { sliderDragging_ = true; });
-	connect(slider_, &QSlider::sliderReleased, this, [this] { sliderDragging_ = false; });
-	connect(slider_, &QSlider::valueChanged, this, [this](int pos) {
-		if (!slider_->isSliderDown() && !slider_->hasFocus())
-			return;
-		const PhoneView *v = current();
-		const Cam *c = v ? v->caps.cam(v->state.cam) : nullptr;
-		if (!c || !c->canZoom())
-			return;
-		const double lo = std::log(c->min), hi = std::log(c->max);
-		requestZoom(std::exp(lo + pos / 1000.0 * (hi - lo)));
+	connect(preview_, &PreviewWidget::menuAt, this, &PhoneDock::showMenu);
+	connect(moreBtn_, &QToolButton::clicked, this,
+		[this] { showMenu(moreBtn_->mapToGlobal(QPoint(moreBtn_->width(), moreBtn_->height()))); });
+	connect(micBtn_, &QToolButton::clicked, this, [this](bool on) { cmd(json{{"mic", on}}.dump()); });
+	connect(torchBtn_, &QToolButton::clicked, this, [this](bool on) { cmd(json{{"torch", on}}.dump()); });
+	connect(snapBtn_, &QToolButton::clicked, this, [this] {
+		cmd(json{{"snap", true}}.dump());
+		message("Taking a snapshot...");
 	});
-	connect(camBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
-		Hub::get().sendCmd(selected_, json{{"cam", camBox_->itemData(i).toString().toStdString()}}.dump());
-	});
-	connect(modeBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
-		Hub::get().sendCmd(selected_, json{{"mode", modeBox_->itemData(i).toString().toStdString()}}.dump());
-	});
-	connect(codecBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
-		Hub::get().sendCmd(selected_, json{{"codec", codecBox_->itemData(i).toString().toStdString()}}.dump());
-	});
-	connect(torchBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"torch", on}}.dump()); });
-	connect(micBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"mic", on}}.dump()); });
-	connect(inputBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
-		Hub::get().sendCmd(selected_, json{{"micIn", inputBox_->itemData(i).toString().toStdString()}}.dump());
-	});
-	connect(nsBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"ns", on}}.dump()); });
-	connect(aecBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"aec", on}}.dump()); });
-	connect(agcBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"agc", on}}.dump()); });
-	connect(micOnlyBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"micOnly", on}}.dump()); });
-	connect(everyBtn_, &QToolButton::clicked, this, &PhoneDock::setEveryScene);
-	connect(otherBtn_, &QToolButton::clicked, this, &PhoneDock::setInOtherApps);
-	connect(mirrorBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"mirror", on}}.dump()); });
-	connect(flipBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"flip", on}}.dump()); });
-	connect(lockBtn_, &QToolButton::clicked, this, [this](bool on) { Hub::get().sendCmd(selected_, json{{"lock", on}}.dump()); });
-	connect(previewBtn_, &QToolButton::toggled, this, &PhoneDock::setPreviewVisible);
-	connect(usbBtn_, &QPushButton::clicked, this, &PhoneDock::usbConnect);
 	connect(firewallBtn_, &QPushButton::clicked, this, [this] {
 		const uint16_t port = Hub::get().port();
 		QPointer<PhoneDock> self(this);
@@ -559,8 +789,10 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 				if (!self)
 					return;
 				self->firewallBtn_->setVisible(!ok);
+				self->alerts_->setVisible(!self->firewallBtn_->isHidden() || !self->updateBtn_->isHidden());
 				self->message(ok ? "Phones are allowed through Windows Firewall now."
-						 : "Windows Firewall wasn't changed (the admin prompt was declined?).");
+						 : "Windows Firewall wasn't changed (the admin prompt was declined?).",
+					      !ok);
 			});
 		}).detach();
 	});
@@ -586,11 +818,14 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 				self->updateBtn_->setText("Update");
 				self->message(ran  ? "The installer is open. It closes OBS to replace the plugin, then you reopen OBS."
 					      : ok ? "Downloaded, but the installer didn't start."
-						   : "The update download failed. Check the internet connection.");
+						   : "The update download failed. Check the internet connection.",
+					      !ran);
 			});
 		}).detach();
 	});
 
+	styleTools();
+	setPreviewVisible(previewOn_);
 	refresh();
 	if (phones_.empty())
 		addBtn_->setChecked(true);
@@ -615,6 +850,47 @@ void PhoneDock::hideEvent(QHideEvent *e)
 	QWidget::hideEvent(e);
 }
 
+void PhoneDock::changeEvent(QEvent *e)
+{
+	// A theme change in OBS: the icons and tool buttons follow its new palette.
+	if (e->type() == QEvent::PaletteChange || e->type() == QEvent::StyleChange) {
+		styleTools();
+		chipsKey_.clear();
+		if (!refreshTimer_->isActive())
+			refreshTimer_->start(0);
+	}
+	QWidget::changeEvent(e);
+}
+
+/** The tool buttons in the theme's colours (mock `.ibtn`): a filled square, Highlight when on. */
+void PhoneDock::styleTools()
+{
+	if (styling_ || !micBtn_)
+		return;
+	styling_ = true;
+	const QPalette &pal = palette();
+	const QColor button = pal.color(QPalette::Button), hover = pal.color(QPalette::Mid), hl = pal.color(QPalette::Highlight);
+	const QString base = QString("QToolButton{background:%1;border:1px solid %1;border-radius:4px;padding:0}"
+				     "QToolButton:hover{border-color:%2}"
+				     "QToolButton:checked{background:%3;border-color:%4}")
+				     .arg(button.name(), hover.name(), hl.name(), hl.lighter(130).name());
+	const QString warn = QString("QToolButton{background:%1;border:1px solid %2;border-radius:4px;padding:0}")
+				     .arg(kMutedBg.name(), kRed.name());
+	for (QToolButton *b : {torchBtn_, snapBtn_, moreBtn_})
+		b->setStyleSheet(base);
+	micBtn_->setStyleSheet(micWarn_ ? warn : base);
+	const QColor fg = pal.color(QPalette::ButtonText);
+	const qreal dpr = devicePixelRatioF();
+	torchBtn_->setIcon(svgIcon(kIconTorch, fg, dpr));
+	snapBtn_->setIcon(svgIcon(kIconShot, fg, dpr));
+	moreBtn_->setIcon(svgIcon(kIconDots, fg, dpr));
+	micBtn_->setIcon(svgIcon(micWarn_ ? kIconMicOff : kIconMic, micWarn_ ? QColor(Qt::white) : fg, dpr));
+	QPalette mp = muted_->palette();
+	mp.setColor(QPalette::WindowText, pal.color(QPalette::PlaceholderText));
+	muted_->setPalette(mp);
+	styling_ = false;
+}
+
 const PhoneView *PhoneDock::current() const
 {
 	for (auto &p : phones_)
@@ -630,8 +906,14 @@ void PhoneDock::select(const std::string &device)
 	selected_ = device;
 	requested_ = 0;
 	preview_->clear();
-	presetKey_.clear();
+	rulerKey_.clear();
 	refresh();
+}
+
+void PhoneDock::cmd(const std::string &json)
+{
+	if (!selected_.empty())
+		Hub::get().sendCmd(selected_, json);
 }
 
 void PhoneDock::rebuildPhones()
@@ -640,11 +922,15 @@ void PhoneDock::rebuildPhones()
 		delete it->widget();
 		delete it;
 	}
+	const QColor off = palette().color(QPalette::PlaceholderText);
 	for (auto &p : phones_) {
 		auto *b = new QToolButton();
 		b->setCheckable(true);
 		b->setChecked(p.device == selected_);
-		b->setText(QString::fromStdString((p.connected ? "● " : "○ ") + p.name));
+		b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+		b->setIconSize(QSize(8, 8));
+		b->setIcon(ledIcon(p.connected, off, devicePixelRatioF()));
+		b->setText(QString::fromStdString(p.name));
 		b->setToolTip(p.connected ? QString("Connected from %1").arg(QString::fromStdString(p.peer))
 					  : "Not connected. Open Rely-A-Cam on this phone; it reconnects by itself.");
 		const std::string d = p.device;
@@ -686,161 +972,86 @@ void PhoneDock::refresh()
 
 	const PhoneView *v = current();
 	const Cam *c = v ? v->caps.cam(v->state.cam) : nullptr;
-	const bool micOnly = v && v->connected && v->state.micOnly;
-	// With the camera off, the camera controls can't do anything (DESIGN.md rule 7).
-	controls_->setEnabled(v && v->connected && !micOnly);
-	usbBtn_->setVisible(true);
+	const bool live = v && v->connected;
+	const bool micOnly = live && v->state.micOnly;
+	const State *st = v ? &v->state : nullptr;
 
+	// Status line: link · quality · delay · temperature, with the heat hint and the lock (mock `.dline`).
 	if (!v) {
 		status_->setText("Add a phone: install Rely-A-Cam on it, then scan the QR.");
+		status_->setToolTip(QString());
+	} else if (!live) {
+		status_->setText(QString::fromStdString(v->name).toHtmlEscaped() +
+				 " is offline. Open Rely-A-Cam on the phone; it reconnects by itself.");
+		status_->setToolTip(QString());
+	} else {
+		const QString warmSpan = QString("<span style=\"color:%1\">%2</span>").arg(kYellow.name());
+		QStringList parts;
+		parts << (QString(v->usb ? "USB" : "Wi-Fi") + (st->live ? "" : " (not live)"));
+		if (micOnly)
+			parts << "Mic only";
+		else if (!st->mode.empty())
+			parts << compactMode(st->mode);
+		parts << QString("%1 ms").arg(v->rttMs);
+		if (st->temp > 0) {
+			const QString t = QString("%1 °C").arg(st->temp, 0, 'f', 0);
+			parts << (isHot(st->temp) ? warmSpan.arg(t + " " + heatHint(c, st->mode)) : t);
+		}
+		if (st->aeLock)
+			parts << warmSpan.arg("AE/AF locked");
+		status_->setText(parts.join(" &#183; "));
+		// The details the line leaves out, for whoever wants them.
+		QStringList more;
+		more << QString::fromStdString(st->codec).toUpper() << QString("%1 Mb/s").arg(v->mbps, 0, 'f', 1)
+		     << (v->usb ? QString("over USB") : QString::fromStdString(v->peer));
+		if (st->battery >= 0)
+			more << QString("battery %1%").arg(st->battery);
+		status_->setToolTip(more.join(" · "));
+	}
+
+	// Preview: the picture, its grid, the hint.
+	if (!v) {
 		preview_->setPlaceholder("No phone yet. Click \"+ Add phone\".");
 		preview_->clear();
-	} else if (!v->connected) {
-		status_->setText(QString::fromStdString(v->name) +
-				 " is offline. Open Rely-A-Cam on the phone; it reconnects by itself.");
+	} else if (!live) {
 		preview_->setPlaceholder("Waiting for the phone...");
 		preview_->clear();
+	} else if (micOnly) {
+		preview_->setPlaceholder("Mic only\ncamera off");
+		preview_->clear();
 	} else {
-		QStringList parts;
-		parts << (v->state.live ? "● Live" : "Connected");
-		if (!v->state.mode.empty())
-			parts << QString::fromStdString(modeLabel(v->state.mode));
-		parts << QString::fromStdString(v->state.codec).toUpper();
-		parts << QString("%1 Mb/s").arg(v->mbps, 0, 'f', 1);
-		parts << QString("%1 ms").arg(v->rttMs);
-		parts << (v->usb ? QString("USB") : QString::fromStdString(v->peer));
-		if (v->state.temp > 0)
-			parts << QString("%1°C").arg(v->state.temp, 0, 'f', 0);
-		if (v->state.battery >= 0)
-			parts << QString("%1%").arg(v->state.battery);
-		status_->setText(parts.join(" · "));
-		if (micOnly) {
-			preview_->setPlaceholder("Mic only: the phone's camera is off. Turn Mic only off to bring it back.");
-			preview_->clear();
-		} else {
-			preview_->setPlaceholder("Waiting for video...");
+		preview_->setPlaceholder("Waiting for video...");
+	}
+	const bool zoomable = c && c->canZoom();
+	preview_->setGrid(live && !micOnly && st->grid.dock);
+	preview_->setHint(!live ? QString() : zoomable && !micOnly ? "scroll · pinch · right-click: menu" : "right-click: menu");
+
+	// The ruler, rebuilt only when the camera changes; or why there's none.
+	ruler_->setVisible(v && !micOnly && zoomable);
+	ruler_->setEnabled(live);
+	noZoom_->setVisible(v && !micOnly && c && !zoomable);
+	if (c && !zoomable)
+		noZoom_->setText(QString("This camera can't zoom (%1 only).").arg(QString::fromStdString(zoomLabel(c->min))));
+	const std::string key = zoomable ? v->device + "/" + c->id : "";
+	if (key != rulerKey_) {
+		rulerKey_ = key;
+		if (zoomable) {
+			std::vector<double> labels = presets(c->min, c->max, c->lenses);
+			if (std::none_of(labels.begin(), labels.end(), [&](double l) { return std::fabs(l - c->max) < 1e-6; }))
+				labels.push_back(c->max);
+			ruler_->setCamera(c->min, c->max, labels);
 		}
 	}
 
-	// Camera list.
-	camBox_->blockSignals(true);
-	camBox_->clear();
-	if (v)
-		for (auto &cam : v->caps.cams) {
-			QString label = QString::fromStdString(cam.label);
-			if (cam.canZoom())
-				label += QString(" (%1-%2)").arg(QString::fromStdString(zoomLabel(cam.min)), QString::fromStdString(zoomLabel(cam.max)));
-			camBox_->addItem(label, QString::fromStdString(cam.id));
-			if (cam.id == v->state.cam)
-				camBox_->setCurrentIndex(camBox_->count() - 1);
-		}
-	camBox_->setEnabled(camBox_->count() > 1);
-	camBox_->blockSignals(false);
-
-	// Quality: only the modes this camera reported, up to 4K.
-	modeBox_->blockSignals(true);
-	modeBox_->clear();
-	if (c)
-		for (auto &m : c->modes) {
-			modeBox_->addItem(QString::fromStdString(modeLabel(m)), QString::fromStdString(m));
-			if (m == v->state.mode)
-				modeBox_->setCurrentIndex(modeBox_->count() - 1);
-		}
-	modeBox_->blockSignals(false);
-
-	codecBox_->blockSignals(true);
-	codecBox_->clear();
-	if (v)
-		for (auto &k : v->caps.codecs) {
-			codecBox_->addItem(QString::fromStdString(k).toUpper(), QString::fromStdString(k));
-			if (k == v->state.codec)
-				codecBox_->setCurrentIndex(codecBox_->count() - 1);
-		}
-	codecBox_->setVisible(codecBox_->count() > 1);
-	codecBox_->blockSignals(false);
-
-	torchBtn_->setEnabled(c && c->flash);
-	torchBtn_->setChecked(v && v->state.torch);
-	mirrorBtn_->setChecked(v && v->state.mirror);
-	flipBtn_->setChecked(v && v->state.flip);
-	lockBtn_->setChecked(v && v->state.lock);
-
-	// Mic.
-	const bool live = v && v->connected;
-	const bool micOk = live && v->caps.mic;
-	micBtn_->setEnabled(micOk);
-	micBtn_->setChecked(micOk && v->state.mic);
-	micBtn_->setText(!micOk ? "Mic" : v->state.mic ? "On" : "Muted");
-	micBtn_->setToolTip(live && !v->caps.mic ? "The phone hasn't allowed Rely-A-Cam to use its microphone. Allow it in the phone's Settings > Apps > Rely-A-Cam > Permissions."
-						: "Mute or unmute this phone's mic");
-	inputBox_->blockSignals(true);
-	inputBox_->clear();
-	if (v)
-		for (auto &m : v->caps.mics) {
-			inputBox_->addItem(QString::fromStdString(m.label), QString::fromStdString(m.id));
-			if (m.id == v->state.micIn)
-				inputBox_->setCurrentIndex(inputBox_->count() - 1);
-		}
-	inputBox_->setEnabled(micOk && inputBox_->count() > 0);
-	inputBox_->blockSignals(false);
-	struct Fx {
-		QToolButton *b;
-		const char *key;
-		bool on;
-	};
-	const Fx fx[] = {{nsBtn_, "ns", v && v->state.ns}, {aecBtn_, "aec", v && v->state.aec}, {agcBtn_, "agc", v && v->state.agc}};
-	bool anyFx = false;
-	for (const Fx &f : fx) {
-		// Only the effects this phone has (a phone without one can't turn it on).
-		const bool has = v && v->caps.hasClean(f.key);
-		f.b->setVisible(has);
-		f.b->setEnabled(micOk);
-		f.b->setChecked(has && f.on);
-		anyFx = anyFx || has;
-	}
-	cleanLabel_->setVisible(anyFx);
-	micOnlyBtn_->setEnabled(live);
-	micOnlyBtn_->setChecked(micOnly);
-	{
-		obs_source_t *mic = v ? Hub::get().micSource(v->device) : nullptr;
-		everyBtn_->setEnabled(mic != nullptr);
-		everyBtn_->setChecked(routing::isEveryScene(mic));
-		otherBtn_->setEnabled(mic != nullptr);
-		otherBtn_->setChecked(mic && routing::inOtherApps(mic));
-		obs_source_release(mic);
-	}
-
-	// Presets, rebuilt only when the camera changes.
-	const std::string key = c ? v->device + "/" + c->id : "";
-	if (key != presetKey_) {
-		presetKey_ = key;
-		while (QLayoutItem *it = presetRow_->takeAt(0)) {
-			delete it->widget();
-			delete it;
-		}
-		if (c) {
-			auto stops = presets(c->min, c->max, c->lenses);
-			if (stops.empty()) {
-				presetRow_->addWidget(new QLabel("This camera can't zoom."));
-			}
-			for (double z : stops) {
-				auto *b = new QPushButton(QString::fromStdString(zoomLabel(z)));
-				connect(b, &QPushButton::clicked, this, [this, z] { requestZoom(z); });
-				presetRow_->addWidget(b);
-			}
-		}
-		presetRow_->addStretch(1);
-	}
-
-	// Zoom value, slider and the dock-only prediction.
-	double shown = v ? v->state.zoom : 1;
+	// Zoom value and the dock-only prediction.
+	double shown = st ? st->zoom : 1;
 	double scale = 1;
 	if (v && requested_ > 0) {
 		const qint64 window = 2 * std::max(v->rttMs, 30) + 350;
-		const bool arrived = std::fabs(v->state.zoom - requested_) / requested_ < 0.02;
+		const bool arrived = std::fabs(st->zoom - requested_) / requested_ < 0.02;
 		if (requestedAt_.elapsed() < window && !arrived) {
 			shown = requested_;
-			scale = requested_ / std::max(v->state.zoom, 0.01);
+			scale = requested_ / std::max(st->zoom, 0.01);
 			QTimer::singleShot(60, this, [this] {
 				if (!refreshTimer_->isActive())
 					refreshTimer_->start(0);
@@ -849,23 +1060,38 @@ void PhoneDock::refresh()
 			requested_ = 0;
 		}
 	}
-	const bool zoomable = c && c->canZoom();
-	slider_->setEnabled(zoomable);
-	minLabel_->setText(c ? QString::fromStdString(zoomLabel(c->min)) : "");
-	maxLabel_->setText(c ? QString::fromStdString(zoomLabel(c->max)) : "");
-	zoomLabel_->setText(c ? QString::fromStdString(zoomLabel(shown)) : "");
-	if (zoomable && !sliderDragging_ && !slider_->isSliderDown()) {
-		const double lo = std::log(c->min), hi = std::log(c->max);
-		slider_->blockSignals(true);
-		slider_->setValue(int(std::lround((std::log(shown) - lo) / (hi - lo) * 1000)));
-		slider_->blockSignals(false);
-	}
-	if (v && v->connected) {
-		preview_->setPose(v->state.rot, v->state.mirror, v->state.flip);
+	if (zoomable)
+		ruler_->setValue(shown);
+	if (live && !micOnly) {
+		preview_->setPose(st->rot, st->mirror, st->flip);
 		preview_->setPrediction(scale, c ? QString::fromStdString(zoomLabel(shown)) : QString());
 	} else {
 		preview_->setPrediction(1, QString());
 	}
+
+	// Tools: mic and its meter, torch, snapshot, the menu.
+	tools_->setVisible(v != nullptr);
+	const bool micOk = live && v->caps.mic;
+	const bool warn = micOk && !st->mic;
+	micBtn_->setEnabled(micOk);
+	micBtn_->setChecked(micOk && st->mic);
+	micBtn_->setToolTip(live && !v->caps.mic ? "The phone hasn't allowed Rely-A-Cam to use its microphone. Allow it in the phone's Settings > Apps > Rely-A-Cam > Permissions."
+				: warn ? "Mic muted: click to turn on"
+				       : "Mic on: click to mute");
+	if (warn != micWarn_) {
+		micWarn_ = warn;
+		styleTools();
+	}
+	meter_->setVisible(!warn);
+	muted_->setVisible(warn);
+	torchBtn_->setVisible(c && c->flash && !micOnly);
+	torchBtn_->setEnabled(live);
+	torchBtn_->setChecked(live && st->torch);
+	const bool canSnap = live && !micOnly && !st->snap.empty();
+	snapBtn_->setVisible(canSnap);
+	if (canSnap)
+		snapBtn_->setToolTip(QString("Snapshot: a %1 photo saved on this PC, in Pictures\\Rely-A-Cam").arg(QString::fromStdString(st->snap)));
+	moreBtn_->setEnabled(v != nullptr);
 }
 
 void PhoneDock::tickMeter()
@@ -883,6 +1109,153 @@ void PhoneDock::tickMeter()
 		clipped_ = false;
 	meter_->setLevel(shownPeak_, clipped_);
 }
+
+// ---- the menu (mock dockMenu) ----------------------------------------------------------------
+
+static QAction *addItem(QMenu *m, const QString &text, bool checkable, bool checked, bool enabled, std::function<void()> fn)
+{
+	QAction *a = m->addAction(text);
+	a->setCheckable(checkable);
+	a->setChecked(checked);
+	a->setEnabled(enabled);
+	QObject::connect(a, &QAction::triggered, a, [fn] { fn(); });
+	return a;
+}
+
+void PhoneDock::showMenu(QPoint global)
+{
+	if (!current())
+		return;
+	QMenu menu(this);
+	fillMenu(&menu);
+	menu.exec(global);
+}
+
+void PhoneDock::fillMenu(QMenu *m)
+{
+	const PhoneView *v = current();
+	if (!v)
+		return;
+	// A copy: the phone's state can change while the menu is open, and every action names the
+	// value it sets, worked out from what the menu showed.
+	const PhoneView view = *v;
+	const State st = view.state;
+	const Cam *c = view.caps.cam(st.cam);
+	const bool live = view.connected;
+
+	// Camera.
+	QMenu *cam = m->addMenu("Camera");
+	cam->setEnabled(live && !view.caps.cams.empty());
+	for (const auto &k : view.caps.cams) {
+		QString label = QString::fromStdString(k.label + ", " + zoomLabel(k.min));
+		if (k.canZoom())
+			label += "-" + QString::fromStdString(zoomLabel(k.max));
+		const std::string id = k.id;
+		addItem(cam, label, true, k.id == st.cam, true, [this, id] { cmd(json{{"cam", id}}.dump()); });
+	}
+
+	// Quality, then the codec when there's a choice.
+	QMenu *q = m->addMenu("Quality");
+	q->setEnabled(live && c && !st.micOnly);
+	if (c) {
+		const std::string def = defaultMode(c->modes);
+		for (const auto &mode : c->modes)
+			addItem(q, QString::fromStdString(modeLabel(mode) + (mode == def ? " (default)" : "")), true, mode == st.mode, true,
+				[this, mode] { cmd(json{{"mode", mode}}.dump()); });
+	}
+	if (view.caps.codecs.size() > 1) {
+		q->addSeparator();
+		for (const auto &k : view.caps.codecs)
+			addItem(q, QString::fromStdString(k).toUpper(), true, k == st.codec, true, [this, k] { cmd(json{{"codec", k}}.dump()); });
+	}
+
+	// Picture.
+	QMenu *pic = m->addMenu("Picture");
+	pic->setEnabled(live && !st.micOnly);
+	addItem(pic, "Mirror", true, st.mirror, true, [this, on = !st.mirror] { cmd(json{{"mirror", on}}.dump()); });
+	addItem(pic, "Flip", true, st.flip, true, [this, on = !st.flip] { cmd(json{{"flip", on}}.dump()); });
+	addItem(pic, "Lock turn", true, st.lock, true, [this, on = !st.lock] { cmd(json{{"lock", on}}.dump()); });
+	pic->addSeparator();
+	QAction *ae = addItem(pic, "Lock focus + exposure", true, st.aeLock, c && c->aeLock,
+			      [this, on = !st.aeLock] { cmd(json{{"aeLock", on}}.dump()); });
+	if (!(c && c->aeLock))
+		ae->setToolTip("This camera can't lock focus and exposure.");
+	if (c && !c->wb.empty()) {
+		QMenu *wb = pic->addMenu("White balance");
+		for (const auto &k : c->wb)
+			addItem(wb, QString::fromStdString(whiteBalanceLabel(k)), true, k == st.wb, true, [this, k] { cmd(json{{"wb", k}}.dump()); });
+	}
+	pic->addSeparator();
+	addItem(pic, st.snap.empty() ? "Snapshot to PC (not with this camera)" : "Snapshot to PC", false, false, !st.snap.empty(), [this] {
+		cmd(json{{"snap", true}}.dump());
+		message("Taking a snapshot...");
+	});
+
+	// Mic. Every scene and Use in other apps are about the OBS source, so they stay while the
+	// phone is offline; while it's muted they're hidden (DESIGN.md rule 7).
+	QMenu *mic = m->addMenu("Mic");
+	obs_source_t *src = Hub::get().micSource(view.device);
+	const bool micOk = live && view.caps.mic;
+	addItem(mic, live && !view.caps.mic ? "Mic on (not allowed on the phone)" : "Mic on", true, live && st.mic, micOk,
+		[this, on = !st.mic] { cmd(json{{"mic", on}}.dump()); });
+	if (!live || st.mic) {
+		if (live && !view.caps.mics.empty()) {
+			QMenu *in = mic->addMenu("Input");
+			for (const auto &mi : view.caps.mics) {
+				const std::string id = mi.id;
+				addItem(in, QString::fromStdString(mi.label), true, mi.id == st.micIn, true,
+					[this, id] { cmd(json{{"micIn", id}}.dump()); });
+			}
+		}
+		struct Fx {
+			const char *key, *label;
+			bool on;
+		};
+		const Fx fx[] = {{"ns", "Noise", st.ns}, {"aec", "Echo", st.aec}, {"agc", "Auto gain", st.agc}};
+		if (live && std::any_of(std::begin(fx), std::end(fx), [&](const Fx &f) { return view.caps.hasClean(f.key); })) {
+			QMenu *clean = mic->addMenu("Clean-up");
+			for (const Fx &f : fx)
+				if (view.caps.hasClean(f.key)) {
+					const std::string k = f.key;
+					addItem(clean, f.label, true, f.on, true, [this, k, on = !f.on] { cmd(json{{k, on}}.dump()); });
+				}
+		}
+		const bool every = routing::isEveryScene(src);
+		addItem(mic, "Every scene", true, every, src != nullptr, [this, on = !every] { setEveryScene(on); });
+		mic->addSeparator();
+		if (cable::installed()) {
+			const bool apps = src && routing::inOtherApps(src);
+			addItem(mic, "Use in other apps", true, apps, src != nullptr, [this, on = !apps] { setInOtherApps(on); });
+			if (apps) {
+				const bool def = routing::isDefaultMic(src);
+				addItem(mic, "...and be Windows' default mic", true, def, true, [this, on = !def] { setDefaultMic(on); });
+			}
+			addItem(mic, "Remove VB-Cable...", false, false, true, [this] { removeCable(); });
+		} else {
+			addItem(mic, "Use in other apps...", false, false, src != nullptr, [this] { installCable(); });
+		}
+		mic->addSeparator();
+	}
+	addItem(mic, "Mic only (camera off)", true, st.micOnly, live, [this, on = !st.micOnly] { cmd(json{{"micOnly", on}}.dump()); });
+	obs_source_release(src);
+
+	// Overlays. The phone owns the grid setting, so both screens agree (PROTOCOL.md, STATE `grid`).
+	QMenu *ov = m->addMenu("Overlays");
+	ov->setEnabled(live);
+	QMenu *grid = ov->addMenu("Grid");
+	const std::pair<const char *, const char *> places[] = {{"dock", "Dock"}, {"phone", "Phone"}, {"out", "OBS output"}};
+	const bool gridOn[] = {st.grid.dock, st.grid.phone, st.grid.out};
+	for (int i = 0; i < 3; i++) {
+		const std::string k = places[i].first;
+		addItem(grid, places[i].second, true, gridOn[i], true, [this, k, on = !gridOn[i]] { cmd(json{{"grid", {{k, on}}}}.dump()); });
+	}
+
+	m->addSeparator();
+	addItem(m, "Show preview", true, previewOn_, true, [this] { setPreviewVisible(!previewOn_); });
+	addItem(m, "Connect a phone over USB", false, false, true, [this] { usbConnect(); });
+}
+
+// ---- mic routing ---------------------------------------------------------------------------
 
 void PhoneDock::setEveryScene(bool on)
 {
@@ -902,28 +1275,186 @@ void PhoneDock::setInOtherApps(bool on)
 	obs_source_t *mic = Hub::get().micSource(selected_);
 	if (!mic)
 		return;
-	switch (routing::setInOtherApps(mic, on)) {
-	case routing::OtherApps::NoCable:
-		QDesktopServices::openUrl(QUrl(routing::kCableUrl));
-		message("Using the phone mic in Chrome, Discord or Zoom needs the free VB-Audio Virtual Cable. Its download page is open: "
-			"install it, restart the PC, then turn this on again.");
-		break;
-	case routing::OtherApps::On:
-		message("In Chrome, Discord or Zoom, pick \"CABLE Output\" as the microphone. OBS's monitoring plays into the cable now, "
-			"so anything else set to monitor goes there too instead of your headphones. Turn this off to undo it.");
-		break;
-	case routing::OtherApps::Off:
-		break;
-	}
+	routing::setInOtherApps(mic, on);
+	if (on)
+		message(routing::isDefaultMic(mic)
+				? "Apps left on \"Default\" use this phone's mic while it's on. Apps with a mic list can pick \"CABLE Output\"."
+				: "In Chrome, Discord or Zoom, pick \"CABLE Output\" as the microphone.");
+	else
+		message("This phone's mic is no longer in other apps.");
 	obs_source_release(mic);
 	refresh();
 }
+
+void PhoneDock::setDefaultMic(bool on)
+{
+	obs_source_t *mic = Hub::get().micSource(selected_);
+	if (!mic)
+		return;
+	routing::setDefaultMic(mic, on);
+	message(on ? "This phone's mic is Windows' default mic while it's on." : "Windows' default mic is left alone now.");
+	obs_source_release(mic);
+}
+
+/** The install dialog (mock cableInstallDlg / runCable): five steps that tick as they finish. */
+void PhoneDock::installCable()
+{
+	const PhoneView *v = current();
+	if (!v)
+		return;
+	const std::string device = v->device;
+	const QString name = QString::fromStdString(v->name).toHtmlEscaped();
+
+	auto *dlg = new QDialog(window());
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle("Rely-A-Cam");
+	dlg->setMinimumWidth(460);
+	auto *lay = new QVBoxLayout(dlg);
+	lay->setSpacing(8);
+	auto *title = new QLabel(QString("<b>Use %1's mic in other apps?</b>").arg(name));
+	auto *body = new QLabel("Chrome, Discord and Zoom can only use an OBS mic through a virtual cable. Rely-A-Cam sets it up:");
+	body->setWordWrap(true);
+	body->setTextFormat(Qt::RichText);
+	auto *box = new QFrame();
+	box->setFrameShape(QFrame::StyledPanel);
+	auto *bl = new QVBoxLayout(box);
+	bl->setSpacing(4);
+	const QStringList texts = {
+		"Download VB-Audio Virtual Cable from vb-audio.com (1.3 MB, donationware)",
+		"Check it's signed by VB-Audio",
+		"Install it: Windows asks for admin permission, then shows its own \"Install this device software?\" box",
+		"Put your speakers and mic back as Windows' defaults if the install moved them",
+		"Turn on Use in other apps",
+	};
+	std::vector<QLabel *> steps;
+	for (const QString &t : texts) {
+		auto *l = new QLabel(t.toHtmlEscaped());
+		l->setWordWrap(true);
+		l->setTextFormat(Qt::RichText);
+		bl->addWidget(l);
+		steps.push_back(l);
+	}
+	auto *foot = new QLabel();
+	foot->setWordWrap(true);
+	foot->hide();
+	auto *row = new QHBoxLayout();
+	auto *working = new QLabel("Working...");
+	working->hide();
+	auto *go = new QPushButton("Download and install");
+	go->setDefault(true);
+	auto *cancel = new QPushButton("Cancel");
+	auto *ok = new QPushButton("OK");
+	ok->hide();
+	row->addWidget(working);
+	row->addStretch(1);
+	row->addWidget(go);
+	row->addWidget(cancel);
+	row->addWidget(ok);
+	lay->addWidget(title);
+	lay->addWidget(body);
+	lay->addWidget(box);
+	lay->addWidget(foot);
+	lay->addLayout(row);
+
+	const QString muted = palette().color(QPalette::PlaceholderText).name();
+	const QString text = palette().color(QPalette::WindowText).name();
+	auto mark = [steps, texts, muted, text](int now) {
+		for (int k = 0; k < int(steps.size()); k++) {
+			const QString t = texts[k].toHtmlEscaped();
+			if (k < now)
+				steps[k]->setText(QString("<span style=\"color:%1\">&#10003;&nbsp; %2</span>").arg(kNoteGreen.name(), t));
+			else if (k == now)
+				steps[k]->setText(QString("<span style=\"color:%1\">%2 ...</span>").arg(text, t));
+			else
+				steps[k]->setText(QString("<span style=\"color:%1\">%2</span>").arg(muted, t));
+		}
+	};
+	mark(-1);
+	connect(cancel, &QPushButton::clicked, dlg, &QDialog::reject);
+	connect(ok, &QPushButton::clicked, dlg, &QDialog::accept);
+	QPointer<PhoneDock> self(this);
+	QPointer<QDialog> d(dlg);
+	connect(go, &QPushButton::clicked, dlg, [=] {
+		go->hide();
+		cancel->hide();
+		working->show();
+		mark(0);
+		std::thread([=] {
+			const cable::Result r = cable::install([=](int s) {
+				QMetaObject::invokeMethod(qApp, [=] {
+					if (d)
+						mark(s);
+				});
+			});
+			QMetaObject::invokeMethod(qApp, [=] {
+				if (!d)
+					return;
+				working->hide();
+				ok->show();
+				if (!r.ok) {
+					foot->setText(QString("<span style=\"color:%1\">%2</span>")
+							      .arg(kYellow.name(), QString::fromStdString(r.message).toHtmlEscaped()));
+					foot->setTextFormat(Qt::RichText);
+					foot->show();
+					return;
+				}
+				mark(4);
+				if (self) {
+					obs_source_t *mic = Hub::get().micSource(device);
+					if (mic)
+						routing::setInOtherApps(mic, true);
+					obs_source_release(mic);
+					self->refresh();
+				}
+				mark(5);
+				title->setText("<b>Done</b>");
+				body->setText(QString("%1's mic is now Windows' default mic while it's on, so apps left on \"Default\" use it. "
+						      "Apps with a mic list can pick <b>CABLE Output</b>.")
+						      .arg(name));
+				box->hide();
+				foot->setText(QString("<span style=\"color:%1\">Mute it on the phone or in OBS and Windows gets its old default mic back at once.</span>")
+						      .arg(muted));
+				foot->setTextFormat(Qt::RichText);
+				foot->show();
+			});
+		}).detach();
+	});
+	dlg->show();
+}
+
+/** The removal dialog (mock cableRemoveDlg). */
+void PhoneDock::removeCable()
+{
+	QMessageBox box(QMessageBox::NoIcon, "Rely-A-Cam", "<b>Remove VB-Audio Virtual Cable?</b>", QMessageBox::NoButton, window());
+	box.setInformativeText("Apps using \"CABLE Output\" as their mic lose it, and Use in other apps turns off for every phone. "
+			       "Windows asks for admin permission; a restart may be needed to finish.");
+	QPushButton *rm = box.addButton("Remove", QMessageBox::AcceptRole);
+	box.addButton(QMessageBox::Cancel);
+	box.setDefaultButton(rm);
+	box.exec();
+	if (box.clickedButton() != rm)
+		return;
+	routing::offEverywhere();
+	message("Removing VB-Cable...");
+	QPointer<PhoneDock> self(this);
+	std::thread([self] {
+		const cable::Result r = cable::remove();
+		QMetaObject::invokeMethod(qApp, [self, r] {
+			if (self) {
+				self->message(QString::fromStdString(r.message), !r.ok);
+				self->refresh();
+			}
+		});
+	}).detach();
+}
+
+// ---- zoom, preview, QR, notes --------------------------------------------------------------
 
 void PhoneDock::requestZoom(double z)
 {
 	const PhoneView *v = current();
 	const Cam *c = v ? v->caps.cam(v->state.cam) : nullptr;
-	if (!c || !c->canZoom())
+	if (!c || !c->canZoom() || !v->connected)
 		return;
 	z = std::clamp(z, c->min, c->max);
 	requested_ = z;
@@ -949,6 +1480,9 @@ void PhoneDock::flushZoom()
 void PhoneDock::onPreview(const QString &device, const QImage &img)
 {
 	if (!previewOn_ || device.toStdString() != selected_)
+		return;
+	const PhoneView *v = current();
+	if (v && v->state.micOnly)
 		return;
 	preview_->setFrame(img);
 }
@@ -1000,11 +1534,13 @@ void PhoneDock::showAddPanel(bool on)
 	}
 }
 
-void PhoneDock::message(const QString &text)
+void PhoneDock::message(const QString &text, bool warn)
 {
-	message_->setText(text);
-	message_->show();
-	messageTimer_->start(9000);
+	QPalette p = note_->palette();
+	p.setColor(QPalette::WindowText, warn ? kYellow : kNoteGreen);
+	note_->setPalette(p);
+	note_->setText(text);
+	noteTimer_->start(9000);
 }
 
 void PhoneDock::checkFirewall()
@@ -1013,8 +1549,10 @@ void PhoneDock::checkFirewall()
 	std::thread([self] {
 		const bool ok = sys::firewallRulesPresent();
 		QMetaObject::invokeMethod(qApp, [self, ok] {
-			if (self)
-				self->firewallBtn_->setVisible(!ok);
+			if (!self)
+				return;
+			self->firewallBtn_->setVisible(!ok);
+			self->alerts_->setVisible(!ok || !self->updateBtn_->isHidden());
 		});
 	}).detach();
 }
@@ -1035,13 +1573,13 @@ void PhoneDock::checkForUpdate()
 			self->updateBtn_->setText(QString("Update to %1").arg(QString::fromStdString(tag)));
 			self->updateBtn_->setToolTip("A newer Rely-A-Cam plugin is out. Remember to update the phone app too.");
 			self->updateBtn_->show();
+			self->alerts_->show();
 		});
 	}).detach();
 }
 
 void PhoneDock::usbConnect()
 {
-	usbBtn_->setEnabled(false);
 	message("Looking for a phone over USB...");
 	Pairing p = Hub::get().pairing();
 	p.hosts = {"127.0.0.1"};
@@ -1051,10 +1589,8 @@ void PhoneDock::usbConnect()
 	std::thread([self, uri, apk, port] {
 		auto r = sys::connectOverUsb(uri, port, apk);
 		QMetaObject::invokeMethod(qApp, [self, r] {
-			if (!self)
-				return;
-			self->usbBtn_->setEnabled(true);
-			self->message(QString::fromStdString(r.message));
+			if (self)
+				self->message(QString::fromStdString(r.message), !r.ok);
 		});
 	}).detach();
 }
@@ -1068,7 +1604,7 @@ void PhoneDock::usbInstall()
 		auto r = sys::installOverUsb(apk);
 		QMetaObject::invokeMethod(qApp, [self, r] {
 			if (self)
-				self->message(QString::fromStdString(r.message));
+				self->message(QString::fromStdString(r.message), !r.ok);
 		});
 	}).detach();
 }

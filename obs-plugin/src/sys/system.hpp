@@ -14,6 +14,11 @@ namespace rac::sys {
 bool firewallRulesPresent();
 /** Adds the rules for OBS on every network profile. Shows Windows' admin prompt. */
 bool allowThroughFirewall(uint16_t tcpPort, uint16_t udpPort);
+/**
+ * Runs [exe] with [args] through Windows' admin prompt, hidden, and waits up to [timeoutMs].
+ * False when the prompt was declined or the program couldn't start; [exitCode] gets its exit code.
+ */
+bool runElevated(const std::string &exe, const std::string &args, unsigned long timeoutMs, unsigned long *exitCode);
 
 struct Result {
 	bool ok = false;

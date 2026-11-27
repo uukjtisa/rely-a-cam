@@ -89,6 +89,36 @@ bool allowThroughFirewall(uint16_t tcpPort, uint16_t udpPort)
 #endif
 }
 
+bool runElevated(const std::string &exe, const std::string &args, unsigned long timeoutMs, unsigned long *exitCode)
+{
+#ifdef _WIN32
+	const std::wstring file = QString::fromStdString(exe).toStdWString();
+	const std::wstring params = QString::fromStdString(args).toStdWString();
+	SHELLEXECUTEINFOW sei = {};
+	sei.cbSize = sizeof sei;
+	sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+	sei.lpVerb = L"runas";
+	sei.lpFile = file.c_str();
+	sei.lpParameters = params.c_str();
+	sei.nShow = SW_HIDE;
+	if (!ShellExecuteExW(&sei) || !sei.hProcess)
+		return false;
+	WaitForSingleObject(sei.hProcess, DWORD(timeoutMs));
+	DWORD code = STILL_ACTIVE;
+	GetExitCodeProcess(sei.hProcess, &code);
+	CloseHandle(sei.hProcess);
+	if (exitCode)
+		*exitCode = code;
+	return true;
+#else
+	(void)exe;
+	(void)args;
+	(void)timeoutMs;
+	(void)exitCode;
+	return false;
+#endif
+}
+
 // ---- USB (Phase 3) ------------------------------------------------------------------------
 
 std::string adbPath()

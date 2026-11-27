@@ -93,3 +93,54 @@ begin
       'Rely-A-Cam is a plugin for OBS. Install OBS from obsproject.com first, then run this again.' + #13#10 + #13#10 +
       'Install the plugin anyway?', mbConfirmation, MB_YESNO) = IDYES;
 end;
+
+{ VB-Audio Virtual Cable: offered for removal only when the plugin installed it, which it records
+  in HKCU\Software\Rely-A-Cam (src/audio/cable.cpp). A silent uninstall keeps it. }
+const
+  CableKey = 'Software\Rely-A-Cam';
+
+{ The setup sits in a folder the user can write to and this runs as admin, so it runs only while
+  it still carries VB-Audio's signature. }
+function SignedByVbAudio(Path: String): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -Command "$s = Get-AuthenticodeSignature -LiteralPath ''' + Path + '''; ' +
+    'if ($s.Status -eq ''Valid'' -and $s.SignerCertificate.Subject -match ''BUREL VINCENT|VB-Audio'') { exit 0 } else { exit 1 }"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+procedure ForgetCable();
+begin
+  RegDeleteValue(HKCU, CableKey, 'VBCable');
+  RegDeleteValue(HKCU, CableKey, 'VBCableSetup');
+  RegDeleteKeyIfEmpty(HKCU, CableKey);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Marked: Cardinal;
+  Setup: String;
+  Code: Integer;
+begin
+  if (CurUninstallStep <> usUninstall) or UninstallSilent() then
+    Exit;
+  if not RegQueryDWordValue(HKCU, CableKey, 'VBCable', Marked) or (Marked <> 1) then
+    Exit;
+  if MsgBox('Rely-A-Cam installed VB-Audio Virtual Cable for "Use in other apps". Remove it too?' + #13#10 + #13#10 +
+    'Apps using "CABLE Output" as their mic lose it. A restart may be needed to finish.', mbConfirmation, MB_YESNO) <> IDYES then
+    Exit;
+  if not RegQueryStringValue(HKCU, CableKey, 'VBCableSetup', Setup) or not FileExists(Setup) or not SignedByVbAudio(Setup) then
+  begin
+    MsgBox('VB-Cable''s own installer isn''t where Rely-A-Cam left it (or isn''t signed by VB-Audio any more), so it was left installed.' + #13#10 + #13#10 +
+      'Remove it from vb-audio.com/Cable: download the pack, then right-click VBCABLE_Setup_x64.exe > Run as administrator > Remove Driver.',
+      mbInformation, MB_OK);
+    ForgetCable();
+    Exit;
+  end;
+  if Exec(Setup, '-u -h', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    ForgetCable()
+  else
+    MsgBox('VB-Cable''s uninstaller didn''t start, so it was left installed.', mbInformation, MB_OK);
+end;

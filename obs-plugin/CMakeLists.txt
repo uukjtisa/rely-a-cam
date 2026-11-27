@@ -17,7 +17,7 @@ add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Svg)
 
 # FFmpeg: headers and import libraries from obs-deps; at run time the DLLs OBS itself ships.
 find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h REQUIRED)
@@ -29,11 +29,11 @@ find_path(NLOHMANN_INCLUDE_DIR nlohmann/json.hpp REQUIRED)
 
 target_link_libraries(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets Qt6::Network ${AVCODEC_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB}
+  PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets Qt6::Network Qt6::Svg ${AVCODEC_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB}
 )
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIR} ${NLOHMANN_INCLUDE_DIR} src)
 if(WIN32)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp shell32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp shell32 ole32 wintrust crypt32)
 endif()
 target_compile_options(
   ${CMAKE_PROJECT_NAME}
@@ -51,6 +51,7 @@ target_sources(
     src/source/phone-source.cpp
     src/source/phone-mic.cpp
     src/audio/routing.cpp
+    src/audio/cable.cpp
     src/dock/dock.cpp
     src/sys/system.cpp
     src/third_party/qrcodegen/qrcodegen.cpp

@@ -11,7 +11,10 @@
 #include <util/platform.h>
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <QNetworkDatagram>
 #include <QNetworkInterface>
 #include <QRandomGenerator>
@@ -547,6 +550,7 @@ void Hub::deliverState(const std::string &device, const State &st)
 		if (s->device() == device) {
 			s->setTransform(st.rot, st.mirror, st.flip);
 			s->setCameraOff(st.micOnly);
+			s->setGrid(st.grid.out);
 			s->remember(st);
 		}
 	for (auto *m : mics_)
@@ -884,6 +888,9 @@ void PhoneLink::handle(Frame &f)
 	case Type::Error:
 		close(false);
 		break;
+	case Type::Snap:
+		saveSnap(f.payload);
+		break;
 	case Type::VConf:
 	case Type::Video:
 	case Type::AConf:
@@ -893,6 +900,40 @@ void PhoneLink::handle(Frame &f)
 	default:
 		break;
 	}
+}
+
+/** A snapshot from the phone: kept as the phone sent it, in Pictures\Rely-A-Cam, never overwriting. */
+void PhoneLink::saveSnap(const std::vector<uint8_t> &jpeg)
+{
+	if (jpeg.size() < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8) {
+		obs_log(LOG_WARNING, "'%s' sent a snapshot that isn't a JPEG", name_.c_str());
+		return;
+	}
+	const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + "/Rely-A-Cam";
+	QDir().mkpath(dir);
+	QString base = QString::fromStdString(name_).trimmed();
+	for (QChar &c : base)
+		if (QStringLiteral("\\/:*?\"<>|").contains(c) || c.unicode() < 32)
+			c = '_';
+	if (base.isEmpty())
+		base = QStringLiteral("Phone");
+	QString path;
+	for (int n = 1;; n++) {
+		path = QStringLiteral("%1/%2 %3.jpg").arg(dir, base).arg(n);
+		if (!QFileInfo::exists(path))
+			break;
+	}
+	QFile out(path);
+	if (!out.open(QIODevice::WriteOnly) ||
+	    out.write(reinterpret_cast<const char *>(jpeg.data()), qint64(jpeg.size())) != qint64(jpeg.size())) {
+		emit hub_->message(QStringLiteral("The snapshot couldn't be saved in %1.").arg(QDir::toNativeSeparators(dir)));
+		return;
+	}
+	out.close();
+	const QString size = QString::fromStdString(view_.state.snap);
+	obs_log(LOG_INFO, "snapshot from '%s' saved (%zu bytes)", name_.c_str(), jpeg.size());
+	emit hub_->message(QStringLiteral("Snapshot saved: Pictures\\Rely-A-Cam\\%1%2")
+				   .arg(QFileInfo(path).fileName(), size.isEmpty() ? QString() : " (" + size + ")"));
 }
 
 void PhoneLink::handleHello(const Frame &f)

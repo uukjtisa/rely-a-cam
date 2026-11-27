@@ -150,6 +150,7 @@ private:
 	void onReadyRead();
 	void handle(Frame &f);
 	void handleHello(const Frame &f);
+	void saveSnap(const std::vector<uint8_t> &jpeg);
 	void serveHttp();
 	void onTick();
 	void publish();

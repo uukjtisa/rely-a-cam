@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "routing.hpp"
 
+#include "cable.hpp"
+#include "../net/hub.hpp"
 #include "../source/phone-mic.hpp"
 #include "plugin-support.h"
 
@@ -10,12 +12,15 @@
 #include <util/platform.h>
 
 #include <QFile>
+#include <QObject>
+#include <QTimer>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -198,125 +203,280 @@ void unregisterSaveCallback()
 
 // ---- use in other apps ----------------------------------------------------------------------
 
-struct Device {
-	std::string name, id;
+namespace {
+
+/** One mic playing into the cable. The capture callback's param is the writer itself. */
+struct Tap {
+	obs_weak_source_t *weak = nullptr;
+	std::unique_ptr<cable::Writer> writer;
+	bool hooked = false;
+	uint64_t nextTry = 0;
 };
 
-static bool findCable(Device &out)
+std::vector<Tap> taps;
+QTimer *timer = nullptr;
+bool wanted = false; // the last check's verdict: some phone mic should be the default
+bool taken = false;  // CABLE Output is the default because of us
+
+constexpr uint64_t kRetryNs = 10ULL * 1000 * 1000 * 1000;
+
+void onAudio(void *param, obs_source_t *src, const audio_data *a, bool muted)
 {
-	struct Find {
-		Device d;
-		bool found = false;
-	} f;
-	obs_enum_audio_monitoring_devices(
-		[](void *data, const char *name, const char *id) -> bool {
-			std::string n = name ? name : "";
-			std::string low = n;
-			std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-			if (low.find("cable input") == std::string::npos)
-				return true;
-			auto *f = static_cast<Find *>(data);
-			f->d = {n, id ? id : ""};
-			f->found = true;
-			return false;
+	const auto ch = uint32_t(audio_output_get_channels(obs_get_audio()));
+	static_cast<cable::Writer *>(param)->write(reinterpret_cast<const float *const *>(a->data), ch, a->frames,
+						   obs_source_get_volume(src), muted);
+}
+
+void unhook(Tap &t)
+{
+	if (!t.hooked)
+		return;
+	if (obs_source_t *s = obs_weak_source_get_source(t.weak)) {
+		// Returns once no callback is running, so the writer can go after it.
+		obs_source_remove_audio_capture_callback(s, onAudio, t.writer.get());
+		obs_source_release(s);
+	}
+	t.hooked = false;
+}
+
+void drop(Tap &t)
+{
+	unhook(t);
+	t.writer.reset();
+	obs_weak_source_release(t.weak);
+	t.weak = nullptr;
+}
+
+Tap *tapFor(obs_source_t *src)
+{
+	for (auto &t : taps)
+		if (t.weak && obs_weak_source_references_source(t.weak, src))
+			return &t;
+	return nullptr;
+}
+
+bool setting(obs_source_t *src, const char *key)
+{
+	obs_data_t *s = obs_source_get_settings(src);
+	const bool on = obs_data_get_bool(s, key);
+	obs_data_release(s);
+	return on;
+}
+
+/** The phone behind [src] is connected and its mic is on in the app. */
+bool phoneMicOn(obs_source_t *src)
+{
+	auto *mic = static_cast<PhoneMic *>(obs_obj_get_data(src));
+	if (!mic)
+		return false;
+	const std::string device = mic->device();
+	for (const auto &v : Hub::get().phones())
+		if (v.device == device)
+			return v.connected && v.state.mic;
+	return false;
+}
+
+/** Opens a writer and hooks it, or schedules a retry (no cable yet, device busy). */
+void tryHook(obs_source_t *src, Tap &t, uint64_t now)
+{
+	if (t.hooked || now < t.nextTry)
+		return;
+	t.writer = std::make_unique<cable::Writer>();
+	if (!t.writer->open(audio_output_get_sample_rate(obs_get_audio()))) {
+		t.writer.reset();
+		t.nextTry = now + kRetryNs;
+		return;
+	}
+	obs_source_add_audio_capture_callback(src, onAudio, t.writer.get());
+	t.hooked = true;
+	obs_log(LOG_INFO, "'%s' plays into CABLE Input for other apps", obs_source_get_name(src));
+}
+
+void reconcile()
+{
+	const uint64_t now = os_gettime_ns();
+	std::vector<obs_source_t *> mics;
+	obs_enum_sources(
+		[](void *d, obs_source_t *s) {
+			if (ours(s))
+				if (obs_source_t *r = obs_source_get_ref(s))
+					static_cast<std::vector<obs_source_t *> *>(d)->push_back(r);
+			return true;
 		},
-		&f);
-	if (f.found)
-		out = f.d;
-	return f.found;
-}
+		&mics);
 
-static Device currentMonitor()
-{
-	const char *n = nullptr, *id = nullptr;
-	obs_get_audio_monitoring_device(&n, &id);
-	return {n ? n : "", id ? id : ""};
-}
-
-/** Sets OBS's monitoring device now and in the profile, so Settings shows it and it survives a restart. */
-static void setMonitor(const Device &d)
-{
-	obs_set_audio_monitoring_device(d.name.c_str(), d.id.c_str());
-	if (config_t *cfg = obs_frontend_get_profile_config()) {
-		config_set_string(cfg, "Audio", "MonitoringDeviceName", d.name.c_str());
-		config_set_string(cfg, "Audio", "MonitoringDeviceId", d.id.c_str());
-		config_save_safe(cfg, "tmp", nullptr);
+	// Taps whose source is gone, or turned off.
+	for (auto &t : taps) {
+		obs_source_t *s = obs_weak_source_get_source(t.weak);
+		const bool keep = s && setting(s, "otherApps");
+		obs_source_release(s);
+		if (!keep)
+			drop(t);
 	}
+	taps.erase(std::remove_if(taps.begin(), taps.end(), [](const Tap &t) { return !t.weak; }), taps.end());
+
+	bool want = false;
+	for (obs_source_t *src : mics) {
+		if (setting(src, "otherApps")) {
+			Tap *t = tapFor(src);
+			if (!t) {
+				taps.push_back({obs_source_get_weak_source(src), nullptr, false, 0});
+				t = &taps.back();
+			}
+			if (t->hooked && t->writer->failed()) {
+				// The cable went away (uninstalled, or the audio service restarted): open a new one.
+				obs_log(LOG_INFO, "CABLE Input stopped; reopening");
+				unhook(*t);
+				t->writer.reset();
+				t->nextTry = now;
+			}
+			tryHook(src, *t, now);
+			want = want || (t->hooked && setting(src, "defaultMic") && phoneMicOn(src) && !obs_source_muted(src));
+		}
+		obs_source_release(src);
+	}
+
+	// Windows' default mic follows the phone's mic, on each change only.
+	if (want && !wanted) {
+		taken = cable::takeDefaultMic();
+	} else if (!want && wanted && taken) {
+		cable::releaseDefaultMic();
+		taken = false;
+	} else if (want && taken && !cable::isDefaultMic()) {
+		cable::forgetDefaultMic();
+		taken = false;
+	}
+	wanted = want;
 }
 
-static std::string stateFile()
+// ---- once, from the version that borrowed OBS's monitoring device ---------------------------
+
+/** Gives OBS's monitoring device back and moves each mic's "monitor and output" to the setting. */
+void migrate()
 {
-	char *dir = obs_module_config_path("");
-	if (dir) {
-		os_mkdirs(dir);
-		bfree(dir);
-	}
 	char *p = obs_module_config_path("monitoring.json");
-	std::string s = p ? p : "monitoring.json";
+	const QString file = QString::fromUtf8(p ? p : "");
 	bfree(p);
-	return s;
+	if (!file.isEmpty() && QFile::exists(file)) {
+		QFile f(file);
+		if (f.open(QIODevice::ReadOnly)) {
+			json j = json::parse(f.readAll().toStdString(), nullptr, false);
+			f.close();
+			const char *n = nullptr, *id = nullptr;
+			obs_get_audio_monitoring_device(&n, &id);
+			std::string cur = n ? n : "";
+			std::transform(cur.begin(), cur.end(), cur.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+			if (j.is_object() && !j.value("id", "").empty() && cur.find("cable input") != std::string::npos) {
+				const std::string pn = j.value("name", ""), pid = j.value("id", "");
+				obs_set_audio_monitoring_device(pn.c_str(), pid.c_str());
+				if (config_t *cfg = obs_frontend_get_profile_config()) {
+					config_set_string(cfg, "Audio", "MonitoringDeviceName", pn.c_str());
+					config_set_string(cfg, "Audio", "MonitoringDeviceId", pid.c_str());
+					config_save_safe(cfg, "tmp", nullptr);
+				}
+				obs_log(LOG_INFO, "gave OBS's monitoring device back to '%s'", pn.c_str());
+			}
+		}
+		QFile::remove(file);
+	}
+	obs_enum_sources(
+		[](void *, obs_source_t *s) {
+			if (ours(s) && obs_source_get_monitoring_type(s) == OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT) {
+				obs_source_set_monitoring_type(s, OBS_MONITORING_TYPE_NONE);
+				obs_data_t *st = obs_source_get_settings(s);
+				obs_data_set_bool(st, "otherApps", true);
+				obs_data_set_bool(st, "defaultMic", true);
+				obs_data_release(st);
+			}
+			return true;
+		},
+		nullptr);
 }
 
-static void savePrevious(const Device &d)
+} // namespace
+
+void start()
 {
-	QFile f(QString::fromStdString(stateFile()));
-	if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-		f.write(QByteArray::fromStdString(json{{"name", d.name}, {"id", d.id}}.dump()));
+	if (timer)
+		return;
+	cable::init();
+	migrate();
+	timer = new QTimer();
+	QObject::connect(timer, &QTimer::timeout, [] { reconcile(); });
+	timer->start(1000);
+	reconcile();
 }
 
-static bool loadPrevious(Device &d)
+void stop()
 {
-	QFile f(QString::fromStdString(stateFile()));
-	if (!f.open(QIODevice::ReadOnly))
-		return false;
-	json j = json::parse(f.readAll().toStdString(), nullptr, false);
-	if (!j.is_object() || j.value("id", "").empty())
-		return false;
-	d = {j.value("name", ""), j.value("id", "")};
-	return true;
+	if (timer) {
+		timer->stop();
+		delete timer;
+		timer = nullptr;
+	}
+	for (auto &t : taps)
+		drop(t);
+	taps.clear();
+	if (taken)
+		cable::releaseDefaultMic();
+	taken = wanted = false;
 }
 
 bool inOtherApps(obs_source_t *src)
 {
-	if (!src || obs_source_get_monitoring_type(src) != OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT)
-		return false;
-	Device cable;
-	return findCable(cable) && currentMonitor().id == cable.id;
+	return src && setting(src, "otherApps");
 }
 
-OtherApps setInOtherApps(obs_source_t *src, bool on)
+bool isDefaultMic(obs_source_t *src)
+{
+	return src && setting(src, "defaultMic");
+}
+
+void setInOtherApps(obs_source_t *src, bool on)
 {
 	if (!src)
-		return OtherApps::Off;
-	if (on) {
-		Device cable;
-		if (!findCable(cable))
-			return OtherApps::NoCable;
-		const Device cur = currentMonitor();
-		if (cur.id != cable.id) {
-			savePrevious(cur);
-			setMonitor(cable);
-		}
-		obs_source_set_monitoring_type(src, OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT);
-		obs_log(LOG_INFO, "'%s' plays into %s for other apps", obs_source_get_name(src), cable.name.c_str());
-		return OtherApps::On;
-	}
-	obs_source_set_monitoring_type(src, OBS_MONITORING_TYPE_NONE);
-	// Give the monitoring device back once no phone mic uses the cable.
-	bool left = false;
+		return;
+	obs_data_t *s = obs_source_get_settings(src);
+	obs_data_set_bool(s, "otherApps", on);
+	if (on && !obs_data_has_user_value(s, "defaultMic"))
+		obs_data_set_bool(s, "defaultMic", true);
+	obs_data_release(s);
+	if (Tap *t = tapFor(src))
+		t->nextTry = 0;
+	if (!on)
+		obs_log(LOG_INFO, "'%s' no longer plays into the cable", obs_source_get_name(src));
+	reconcile();
+}
+
+void setDefaultMic(obs_source_t *src, bool on)
+{
+	if (!src)
+		return;
+	obs_data_t *s = obs_source_get_settings(src);
+	obs_data_set_bool(s, "defaultMic", on);
+	obs_data_release(s);
+	reconcile();
+}
+
+void offEverywhere()
+{
 	obs_enum_sources(
-		[](void *data, obs_source_t *s) {
-			if (ours(s) && obs_source_get_monitoring_type(s) == OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT)
-				*static_cast<bool *>(data) = true;
+		[](void *, obs_source_t *s) {
+			if (ours(s)) {
+				obs_data_t *st = obs_source_get_settings(s);
+				obs_data_set_bool(st, "otherApps", false);
+				obs_data_release(st);
+			}
 			return true;
 		},
-		&left);
-	Device cable, prev;
-	if (!left && findCable(cable) && currentMonitor().id == cable.id && loadPrevious(prev)) {
-		setMonitor(prev);
-		QFile::remove(QString::fromStdString(stateFile()));
-	}
-	return OtherApps::Off;
+		nullptr);
+	reconcile();
+}
+
+bool playing(obs_source_t *src)
+{
+	const Tap *t = src ? tapFor(src) : nullptr;
+	return t && t->hooked && t->writer && !t->writer->failed();
 }
 
 } // namespace rac::routing

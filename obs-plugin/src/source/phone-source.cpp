@@ -5,8 +5,10 @@
 #include "../net/hub.hpp"
 
 #include <graphics/matrix4.h>
+#include <graphics/vec4.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 using nlohmann::json;
@@ -122,6 +124,41 @@ void PhoneSource::setCameraOff(bool off)
 	cameraOff_ = off;
 }
 
+void PhoneSource::setGrid(bool on)
+{
+	std::lock_guard<std::mutex> l(m_);
+	grid_ = on;
+}
+
+/** A filled rectangle in premultiplied [a] white or black, with the solid effect. */
+static void fillRect(gs_effect_t *solid, float x, float y, float w, float h, float rgb, float a)
+{
+	vec4 c;
+	vec4_set(&c, rgb * a, rgb * a, rgb * a, a);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(solid, "color"), &c);
+	gs_matrix_push();
+	gs_matrix_translate3f(x, y, 0);
+	while (gs_effect_loop(solid, "Solid"))
+		gs_draw_sprite(nullptr, 0, uint32_t(std::max(1.0f, w)), uint32_t(std::max(1.0f, h)));
+	gs_matrix_pop();
+}
+
+/** Rule of thirds, as the dock and the phone draw it: white at 55% with a soft dark edge. */
+static void drawGrid(float ow, float oh)
+{
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	const float t = std::max(1.0f, std::round(oh / 1080.0f));
+	for (int pass = 0; pass < 2; pass++) {
+		const float pad = pass == 0 ? 1.0f : 0.0f;
+		const float rgb = pass == 0 ? 0.0f : 1.0f, a = pass == 0 ? 0.35f : 0.55f;
+		for (int i = 1; i <= 2; i++) {
+			const float x = std::round(ow * float(i) / 3.0f - t / 2), y = std::round(oh * float(i) / 3.0f - t / 2);
+			fillRect(solid, x - pad, 0, t + 2 * pad, oh, rgb, a);
+			fillRect(solid, 0, y - pad, ow, t + 2 * pad, rgb, a);
+		}
+	}
+}
+
 std::string PhoneSource::restoreJson()
 {
 	std::lock_guard<std::mutex> l(m_);
@@ -154,7 +191,7 @@ uint32_t PhoneSource::height()
 void PhoneSource::render(gs_effect_t *)
 {
 	int rot;
-	bool mirror, flip, connected, off;
+	bool mirror, flip, connected, off, grid;
 	{
 		std::lock_guard<std::mutex> l(m_);
 		if (hasPending_ && pending_.width > 0) {
@@ -175,6 +212,7 @@ void PhoneSource::render(gs_effect_t *)
 		flip = flip_;
 		connected = connected_;
 		off = cameraOff_;
+		grid = grid_;
 	}
 	if (!tex_ || !connected || off)
 		return;
@@ -200,8 +238,11 @@ void PhoneSource::render(gs_effect_t *)
 		gs_draw_sprite(tex_, 0, uint32_t(tw), uint32_t(th));
 	gs_matrix_pop();
 
-	gs_blend_state_pop();
+	// The grid in display space, so it reads the same on a dark or bright picture.
 	gs_enable_framebuffer_srgb(previous);
+	if (grid)
+		drawGrid(ow, oh);
+	gs_blend_state_pop();
 }
 
 // ---- hotkeys: per source, so each phone gets its own in Settings > Hotkeys ----------------

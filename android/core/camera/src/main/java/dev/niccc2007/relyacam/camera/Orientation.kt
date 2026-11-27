@@ -2,7 +2,14 @@ package dev.niccc2007.relyacam.camera
 
 import android.content.Context
 import android.graphics.Matrix
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.view.OrientationEventListener
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 /**
  * Which way up the phone is, as 0, 90, 180 or 270 (OrientationEventListener's convention: 90 =
@@ -29,6 +36,49 @@ class DeviceOrientation(context: Context, private val onChange: (Int) -> Unit) {
     fun stop() = listener.disable()
 
     companion object { private const val HYSTERESIS = 55 }
+}
+
+/**
+ * The phone's roll, for the level line: the angle of "up" in the device's own frame, in degrees.
+ * 0 held upright in portrait, 90 turned a quarter counter-clockwise (Surface.ROTATION_90), so the
+ * screen's own tilt is this minus the display rotation. Null while the phone lies nearly flat,
+ * where roll means nothing.
+ */
+class Tilt(context: Context, private val onTilt: (Float?) -> Unit) {
+    private val sm = context.getSystemService(SensorManager::class.java)
+    private val sensor = sm?.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val g = FloatArray(3)
+    private var primed = false
+    private var on = false
+
+    private val listener = object : SensorEventListener {
+        override fun onSensorChanged(e: SensorEvent) {
+            // The gravity sensor is already filtered; a raw accelerometer gets a light low-pass.
+            val a = if (e.sensor.type == Sensor.TYPE_GRAVITY || !primed) 1f else 0.15f
+            for (i in 0..2) g[i] += a * (e.values[i] - g[i])
+            primed = true
+            val n = sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+            if (n < 1f || abs(g[2]) > 0.9f * n) { onTilt(null); return }
+            onTilt(Math.toDegrees(atan2(g[0].toDouble(), g[1].toDouble())).toFloat())
+        }
+        override fun onAccuracyChanged(s: Sensor?, accuracy: Int) {}
+    }
+
+    val available: Boolean get() = sensor != null
+
+    fun start() {
+        if (on || sensor == null) return
+        on = true
+        primed = false
+        sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
+    }
+
+    fun stop() {
+        if (!on) return
+        on = false
+        sm?.unregisterListener(listener)
+        onTilt(null)
+    }
 }
 
 /** The geometry that keeps the picture upright, shared by the phone preview and the stream. */

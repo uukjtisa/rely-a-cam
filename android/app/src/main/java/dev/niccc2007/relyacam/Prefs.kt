@@ -52,6 +52,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("wasLive", false)
         set(v) { sp.edit().putBoolean("wasLive", v).apply() }
 
+    /** The level line on the live screen: a phone-only aid, so the phone keeps it, not OBS. */
+    var levelLine: Boolean
+        get() = sp.getBoolean("levelLine", false)
+        set(v) { sp.edit().putBoolean("levelLine", v).apply() }
+
     var lastUpdateCheck: Long
         get() = sp.getLong("lastUpdateCheck", 0)
         set(v) { sp.edit().putLong("lastUpdateCheck", v).apply() }

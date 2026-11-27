@@ -41,7 +41,38 @@ data class CameraInfo(
     val physicalIds: Set<String>,
     /** CaptureRequest timestamps' clock: true = elapsedRealtimeNanos, false = nanoTime. */
     val realtimeClock: Boolean,
+    /** Brightness (exposure compensation) in steps, and the size of one step in EV. Both 0 = none. */
+    val evMin: Int = 0,
+    val evMax: Int = 0,
+    val evStep: Double = 0.0,
+    /** CONTROL_AWB_AVAILABLE_MODES, and whether the current colours can be locked. */
+    val awbModes: Set<Int> = emptySet(),
+    val awbLock: Boolean = false,
+    /** Focus and exposure can be locked (CONTROL_AE_LOCK_AVAILABLE). */
+    val aeLock: Boolean = false,
+    /** JPEG sizes, largest first: the photo a snapshot can take. */
+    val stills: List<Size> = emptyList(),
 ) {
+    val hasEv: Boolean get() = evMax > evMin && evStep > 0
+
+    /** The white balance choices (PROTOCOL.md `wb`) this camera has, in protocol order. */
+    val whiteBalances: List<String>
+        get() = buildList {
+            if (CameraCharacteristics.CONTROL_AWB_MODE_AUTO in awbModes) add("auto")
+            if (awbLock && "auto" in this) add("lock")
+            WB_MODES.forEach { (k, mode) -> if (mode in awbModes) add(k) }
+        }
+
+    companion object {
+        /** The fixed presets, as Camera2 names them. "auto" and "lock" are handled apart. */
+        val WB_MODES = listOf(
+            "daylight" to CameraCharacteristics.CONTROL_AWB_MODE_DAYLIGHT,
+            "cloudy" to CameraCharacteristics.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,
+            "indoor" to CameraCharacteristics.CONTROL_AWB_MODE_INCANDESCENT,
+            "fluorescent" to CameraCharacteristics.CONTROL_AWB_MODE_FLUORESCENT,
+        )
+    }
+
     val front: Boolean get() = facing == CameraCharacteristics.LENS_FACING_FRONT
     val facingName: String
         get() = when (facing) {
@@ -131,6 +162,9 @@ object CameraCatalog {
         val modes = modes(c, map, enc)
         val active = c[CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE] ?: Rect(0, 0, 1, 1)
         val tsSource = c[CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE]
+        val ev = c[CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE]
+        val evStep = c[CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP]?.toDouble() ?: 0.0
+        val stills = map.getOutputSizes(ImageFormat.JPEG).orEmpty().sortedByDescending { it.width.toLong() * it.height }
         return CameraInfo(
             id = id,
             facing = c[CameraCharacteristics.LENS_FACING] ?: CameraCharacteristics.LENS_FACING_EXTERNAL,
@@ -148,6 +182,13 @@ object CameraCatalog {
             listed = listed,
             physicalIds = physical,
             realtimeClock = tsSource == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME,
+            evMin = ev?.lower ?: 0,
+            evMax = ev?.upper ?: 0,
+            evStep = evStep,
+            awbModes = c[CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES]?.toSet().orEmpty(),
+            awbLock = c[CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE] == true,
+            aeLock = c[CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE] == true,
+            stills = stills,
         )
     }
 

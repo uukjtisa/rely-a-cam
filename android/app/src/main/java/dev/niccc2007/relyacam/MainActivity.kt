@@ -14,6 +14,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dev.niccc2007.relyacam.ui.App
@@ -73,6 +76,11 @@ class MainActivity : ComponentActivity() {
         }
         requestedOrientation = if (live && s.lock) ActivityInfo.SCREEN_ORIENTATION_LOCKED
         else ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        // Live, the status bar goes: the picture gets the whole screen, and a swipe from the edge
+        // still brings it back for a moment.
+        val bars = WindowCompat.getInsetsController(window, window.decorView)
+        bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (live) bars.hide(WindowInsetsCompat.Type.statusBars()) else bars.show(WindowInsetsCompat.Type.statusBars())
     }
 
     /** At most twice a day, quietly; offline just means no banner. */

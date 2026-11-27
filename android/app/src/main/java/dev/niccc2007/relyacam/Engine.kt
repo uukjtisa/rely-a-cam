@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
+import android.util.Size
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import dev.niccc2007.relyacam.camera.CameraCatalog
@@ -25,17 +26,20 @@ import dev.niccc2007.relyacam.camera.DeviceOrientation
 import dev.niccc2007.relyacam.camera.EncoderSupport
 import dev.niccc2007.relyacam.camera.Outputs
 import dev.niccc2007.relyacam.camera.Purpose
+import dev.niccc2007.relyacam.camera.Tilt
 import dev.niccc2007.relyacam.camera.Upright
 import dev.niccc2007.relyacam.protocol.CamCaps
 import dev.niccc2007.relyacam.protocol.CamState
 import dev.niccc2007.relyacam.protocol.Caps
 import dev.niccc2007.relyacam.protocol.Cmd
 import dev.niccc2007.relyacam.protocol.Discovery
+import dev.niccc2007.relyacam.protocol.Grid
 import dev.niccc2007.relyacam.protocol.Hello
 import dev.niccc2007.relyacam.protocol.MicInput
 import dev.niccc2007.relyacam.protocol.Mode
 import dev.niccc2007.relyacam.protocol.Pairing
 import dev.niccc2007.relyacam.protocol.Welcome
+import dev.niccc2007.relyacam.protocol.WhiteBalance
 import dev.niccc2007.relyacam.qr.Luma
 import dev.niccc2007.relyacam.qr.QrDecode
 import dev.niccc2007.relyacam.stream.AudioEncoder
@@ -99,7 +103,20 @@ data class UiState(
     val agc: Boolean = false,
     /** Camera off, mic still streaming. */
     val micOnly: Boolean = false,
-)
+    /** Focus and exposure locked; brightness in the camera's own EV steps; white balance. */
+    val aeLock: Boolean = false,
+    val evIndex: Int = 0,
+    val wb: String = WhiteBalance.AUTO,
+    /** The photo size a snapshot takes now ("4096x3072"), or empty when this session has none. */
+    val snap: String = "",
+    /** Where the rule-of-thirds grid shows; the phone owns it so both screens agree. */
+    val grid: Grid = Grid(),
+    /** The level line (phone only, kept on the phone). */
+    val levelLine: Boolean = false,
+) {
+    /** Brightness in EV for the current camera. */
+    val ev: Double get() = evIndex * (cam?.evStep ?: 0.0)
+}
 
 /** The mic meter: peak of the last ~50 ms (0..1), and CLIP, held for a second after it happens. */
 data class MicLevel(val peak: Float = 0f, val clip: Boolean = false)
@@ -132,6 +149,13 @@ object Engine : CameraEvents, LinkEvents {
     val level: StateFlow<MicLevel> = _level
     private var clipUntil = 0L
 
+    /** The phone's roll for the level line (see [Tilt]); only measured while the line shows. */
+    private val _tilt = MutableStateFlow<Float?>(null)
+    val tilt: StateFlow<Float?> = _tilt
+    private lateinit var tiltSensor: Tilt
+    /** A snapshot asked for on the phone (so the phone says when it's sent), not from the PC. */
+    private var snapFromPhone = false
+
     private lateinit var audio: AudioManager
     private var micSources: List<MicSource> = emptyList()
     private var bluetoothRouted = false
@@ -160,8 +184,9 @@ object Engine : CameraEvents, LinkEvents {
         prefs = Prefs(app)
         camera = CameraController(app, this)
         orientation = DeviceOrientation(app) { post { onDeviceTurned() } }
+        tiltSensor = Tilt(app) { _tilt.value = it }
         audio = app.getSystemService(AudioManager::class.java)
-        _ui.update { it.copy(recent = prefs.pcs()) }
+        _ui.update { it.copy(recent = prefs.pcs(), levelLine = prefs.levelLine) }
         // Called at once with what's connected now, then on every plug-in and unplug.
         audio.registerAudioDeviceCallback(object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = post { refreshMics() }
@@ -195,6 +220,12 @@ object Engine : CameraEvents, LinkEvents {
         } else if (s.screen == Screen.SCAN) {
             startScan()
         }
+        updateTilt()
+    }
+
+    /** The tilt sensor runs only while the level line is on screen. */
+    private fun updateTilt() {
+        if (visible && live && s.levelLine && !s.black && !s.micOnly) tiltSensor.start() else tiltSensor.stop()
     }
 
     // ---- scanning -------------------------------------------------------------------------
@@ -392,6 +423,9 @@ object Engine : CameraEvents, LinkEvents {
                 micIn = restore.micIn?.takeIf { id -> it.mics.any { m -> m.id == id } } ?: it.micIn,
                 ns = (restore.ns ?: false) && "ns" in it.clean, aec = (restore.aec ?: false) && "aec" in it.clean,
                 agc = (restore.agc ?: false) && "agc" in it.clean,
+                // The lock belongs to a point in one scene, so it's never restored; the rest is.
+                aeLock = false, evIndex = evIndexFor(cam, restore.ev ?: 0.0), wb = wbFor(cam, restore.wb),
+                grid = Grid().with(restore.grid), snap = "",
             )
         }
         LiveService.start(app, s.pcName, s.micAllowed)
@@ -403,6 +437,21 @@ object Engine : CameraEvents, LinkEvents {
         sendState(force = true)
         h.removeCallbacks(tick)
         h.postDelayed(tick, 1000)
+        updateTilt()
+    }
+
+    /** [ev] (in EV) as the nearest of [cam]'s own steps, inside its range. */
+    private fun evIndexFor(cam: CameraInfo, ev: Double): Int =
+        if (!cam.hasEv) 0 else Math.round(ev / cam.evStep).toInt().coerceIn(cam.evMin, cam.evMax)
+
+    /** [wanted] when [cam] has it, else auto. */
+    private fun wbFor(cam: CameraInfo, wanted: String?): String =
+        wanted?.takeIf { it in cam.whiteBalances } ?: WhiteBalance.AUTO
+
+    /** Where the live camera draws; a snapshot can be up to the video's own size or bigger. */
+    private fun liveOutputs(encoder: Surface? = venc?.surface): Outputs {
+        val m = Mode.parse(s.mode)
+        return Outputs(preview = previewSurface, encoder = encoder, stillsUpTo = m?.let { Size(it.w, it.h) })
     }
 
     private fun pickMode(cam: CameraInfo, wanted: String?): String {
@@ -435,8 +484,10 @@ object Engine : CameraEvents, LinkEvents {
         sendVideoConfig()
         val size = camera.previewSize(cam, m.w, m.h, minOf(m.w * m.h, 1920 * 1080))
         preview?.setDefaultBufferSize(size.width, size.height)
-        set { it.copy(previewW = size.width, previewH = size.height) }
-        camera.open(cam, Purpose.LIVE, Outputs(preview = previewSurface, encoder = enc.surface), m.fps, s.zoom)
+        // A fresh camera starts unlocked; the snapshot size arrives with the session (onStillSize).
+        set { it.copy(previewW = size.width, previewH = size.height, aeLock = false, snap = "") }
+        camera.open(cam, Purpose.LIVE, liveOutputs(enc.surface), m.fps, s.zoom)
+        camera.setPicture(s.evIndex, s.wb)
         if (s.torch) camera.setTorch(true)
     }
 
@@ -521,13 +572,14 @@ object Engine : CameraEvents, LinkEvents {
         h.removeCallbacks(reconnect)
         live = false
         orientation.stop()
+        tiltSensor.stop()
         link?.close(sayBye)
         link = null
         camera.closeAndWait()
         venc?.stop(); venc = null
         stopAudio()
         LiveService.stop(app)
-        set { it.copy(torch = false, black = false, reconnecting = false, micOnly = false) }
+        set { it.copy(torch = false, black = false, reconnecting = false, micOnly = false, aeLock = false, snap = "") }
     }
 
     /** The Stop button: everything is released and the notification goes (must-never list). */
@@ -591,12 +643,19 @@ object Engine : CameraEvents, LinkEvents {
         val oldIn = s.micIn
         // Mic only with the mic muted would send nothing at all, so turning it on unmutes.
         val mic = (c.mic ?: s.mic) || (micOnly && !wasMicOnly)
+        // Brightness is kept in EV across cameras (each has its own step); white balance falls
+        // back to auto on a camera without that choice.
+        val evIndex = c.ev?.let { evIndexFor(cam, it) } ?: if (restart) evIndexFor(cam, s.ev) else s.evIndex
+        val wb = wbFor(cam, c.wb ?: s.wb)
+        val oldLock = s.aeLock
+        val aeLock = !restart && !micOnly && cam.aeLock && (c.aeLock ?: oldLock)
         set {
             it.copy(cam = cam, mode = mode, codec = codec, zoom = zoom, torch = torch, rot = rot, lock = lock,
                 mirror = c.mirror ?: it.mirror, flip = c.flip ?: it.flip, mic = mic, micOnly = micOnly,
                 micIn = c.micIn?.takeIf { id -> it.mics.any { m -> m.id == id } } ?: it.micIn,
                 ns = (c.ns ?: it.ns) && "ns" in it.clean, aec = (c.aec ?: it.aec) && "aec" in it.clean,
-                agc = (c.agc ?: it.agc) && "agc" in it.clean)
+                agc = (c.agc ?: it.agc) && "agc" in it.clean,
+                evIndex = evIndex, wb = wb, aeLock = aeLock, grid = it.grid.with(c.grid))
         }
         if (micOnly && !wasMicOnly) {
             camera.closeAndWait()
@@ -609,8 +668,14 @@ object Engine : CameraEvents, LinkEvents {
         } else if (!micOnly) {
             if (c.zoom != null) camera.setZoom(zoom, glide = fromPc)
             if (c.torch != null) camera.setTorch(torch)
+            if (c.ev != null || c.wb != null) camera.setPicture(evIndex, wb)
+            // The PC has no point to tap, so its lock meters the middle of the picture.
+            if (aeLock && !oldLock) camera.focusAt(0.5f, 0.5f, lock = true)
+            else if (!aeLock && oldLock) camera.unlock()
+            if (c.snap) takeSnap(fromPhone = !fromPc)
         }
         if (s.mic && s.micAllowed) startAudio() else stopAudio()
+        updateTilt()
         if (s.micIn != oldIn) {
             routeBluetooth(inputDevice())
             aenc?.setInput(inputDevice())
@@ -627,11 +692,37 @@ object Engine : CameraEvents, LinkEvents {
         if (live) applyNow(Cmd(zoom = z), fromPc = false) else { camera.setZoom(z, glide = false); set { it.copy(zoom = z) } }
     }
 
-    /** A tap on the picture, already mapped to the sensor's own frame (0..1) by the view. */
-    fun focusSensor(sx: Float, sy: Float) = post { camera.focusAt(sx, sy) }
+    /**
+     * A tap on the picture, already mapped to the sensor's own frame (0..1) by the view. A plain
+     * tap focuses there for a while (and clears a lock, as camera apps do); [lock] (a long press)
+     * locks focus and exposure there.
+     */
+    fun focusSensor(sx: Float, sy: Float, lock: Boolean = false) = post {
+        val cam = s.cam ?: return@post
+        val locked = lock && cam.aeLock && live
+        camera.focusAt(sx, sy, locked)
+        if (live && locked != s.aeLock) { set { it.copy(aeLock = locked) }; sendState(force = true) }
+    }
 
-    fun setBlack(on: Boolean) = set { it.copy(black = on && live) }
+    private fun takeSnap(fromPhone: Boolean) {
+        if (s.snap.isEmpty()) return
+        snapFromPhone = fromPhone
+        camera.takeStill(s.rot)
+    }
+
+    fun setLevelLine(on: Boolean) = post {
+        prefs.levelLine = on
+        set { it.copy(levelLine = on) }
+        updateTilt()
+    }
+
+    fun setBlack(on: Boolean) = post {
+        set { it.copy(black = on && live) }
+        updateTilt()
+    }
     fun clearNotice() = set { it.copy(notice = null) }
+    /** A short line at the bottom (an icon button's name on a long press). */
+    fun hint(text: String) = set { it.copy(notice = text) }
     fun setUpdate(r: Release?) = set { it.copy(update = r) }
 
     // ---- preview surface ------------------------------------------------------------------
@@ -644,7 +735,7 @@ object Engine : CameraEvents, LinkEvents {
             set { it.copy() }
             st.setDefaultBufferSize(s.previewW, s.previewH)
             if (live) {
-                camera.setOutputs(Outputs(preview = previewSurface, encoder = venc?.surface))
+                camera.setOutputs(liveOutputs())
             } else if (s.screen == Screen.SCAN) {
                 startScan()
             }
@@ -660,7 +751,7 @@ object Engine : CameraEvents, LinkEvents {
             val old = previewSurface
             preview = null
             previewSurface = null
-            if (live) camera.setOutputs(Outputs(encoder = venc?.surface))
+            if (live) camera.setOutputs(liveOutputs())
             else if (camera.info != null) camera.setOutputs(Outputs(reader = reader?.surface))
             old?.release()
             done.countDown()
@@ -673,6 +764,22 @@ object Engine : CameraEvents, LinkEvents {
     override fun onZoom(zoom: Double) {
         set { it.copy(zoom = zoom) }
         if (live) post { sendState(force = false) }
+    }
+
+    override fun onStillSize(size: Size?) = post {
+        val snap = size?.let { "${it.width}x${it.height}" }.orEmpty()
+        if (snap == s.snap) return@post
+        set { it.copy(snap = snap) }
+        if (live) sendState(force = true)
+    }
+
+    override fun onStill(jpeg: ByteArray) = post {
+        val fromPhone = snapFromPhone
+        snapFromPhone = false
+        val sent = link?.sendSnap(jpeg) == true
+        Log.i(TAG, "snapshot ${jpeg.size} bytes, sent=$sent")
+        if (!sent) set { it.copy(notice = "The photo couldn't be sent to the PC.") }
+        else if (fromPhone) set { it.copy(notice = "Photo sent to ${it.pcName.ifEmpty { "the PC" }}.") }
     }
 
     override fun onError(info: CameraInfo, message: String) = post {
@@ -812,7 +919,11 @@ object Engine : CameraEvents, LinkEvents {
     private fun caps(): Caps = Caps(
         device = prefs.deviceName,
         cams = s.cams.map {
-            CamCaps(it.id, it.facingName, it.label, it.zoomMin, it.zoomMax, it.lenses, it.flash, it.modes.map { m -> m.toString() })
+            CamCaps(
+                it.id, it.facingName, it.label, it.zoomMin, it.zoomMax, it.lenses, it.flash, it.modes.map { m -> m.toString() },
+                ev = if (it.hasEv) listOf(it.evMin * it.evStep, it.evMax * it.evStep, it.evStep) else emptyList(),
+                wb = it.whiteBalances, aeLock = it.aeLock,
+            )
         },
         codecs = encoderCodecs,
         mic = s.micAllowed,
@@ -842,6 +953,7 @@ object Engine : CameraEvents, LinkEvents {
                 mode = u.mode, codec = u.codec, rot = u.rot, mirror = u.mirror, flip = u.flip,
                 lock = u.lock, temp = u.temp, battery = u.battery, live = live && link != null,
                 micIn = u.micIn, ns = u.ns, aec = u.aec, agc = u.agc, micOnly = u.micOnly,
+                aeLock = u.aeLock, ev = u.ev, wb = u.wb, snap = if (u.micOnly) "" else u.snap, grid = u.grid,
             )
         )
     }

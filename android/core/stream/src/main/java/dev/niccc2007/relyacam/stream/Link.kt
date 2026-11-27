@@ -7,6 +7,7 @@ import dev.niccc2007.relyacam.protocol.Cmd
 import dev.niccc2007.relyacam.protocol.FLAG_CONFIG
 import dev.niccc2007.relyacam.protocol.FLAG_KEY
 import dev.niccc2007.relyacam.protocol.Hello
+import dev.niccc2007.relyacam.protocol.MAX_FRAME
 import dev.niccc2007.relyacam.protocol.Pairing
 import dev.niccc2007.relyacam.protocol.Type
 import dev.niccc2007.relyacam.protocol.Welcome
@@ -100,6 +101,17 @@ class Link private constructor(
         if (!open) return
         if (queue.size > 200) return
         queue.offerLast(Out(Type.AUDIO, Wire.media(ptsUs, flags, data), false, false, ptsUs))
+    }
+
+    /**
+     * A snapshot's JPEG (SNAP), queued behind what's waiting and never dropped for backpressure.
+     * A few megabytes hold the video up for a moment, and the usual drop-to-key-frame absorbs it.
+     * False when it's over the frame limit (the PC would drop the link) or the link is closed.
+     */
+    fun sendSnap(jpeg: ByteArray): Boolean {
+        if (!open || jpeg.size > MAX_FRAME) return false
+        queue.offerLast(Out(Type.SNAP, jpeg, false, false, 0))
+        return true
     }
 
     /** Ends the link on purpose (BYE), releasing nothing else: the caller stops the camera. */

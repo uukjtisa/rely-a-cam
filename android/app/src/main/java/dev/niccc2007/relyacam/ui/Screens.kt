@@ -35,8 +35,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,27 +51,35 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.SystemClock
+import androidx.compose.foundation.layout.PaddingValues
 import dev.niccc2007.relyacam.Engine
 import dev.niccc2007.relyacam.Screen
 import dev.niccc2007.relyacam.UiState
 import dev.niccc2007.relyacam.camera.CameraInfo
 import dev.niccc2007.relyacam.protocol.CamCaps
 import dev.niccc2007.relyacam.protocol.Cmd
+import dev.niccc2007.relyacam.protocol.Heat
 import dev.niccc2007.relyacam.protocol.Mode
 import dev.niccc2007.relyacam.protocol.Presets
+import dev.niccc2007.relyacam.protocol.WhiteBalance
 import dev.niccc2007.relyacam.stream.Reach
 import dev.niccc2007.relyacam.update.Updater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.ln
-import kotlin.math.exp
+import kotlin.math.roundToInt
 
 @Composable
 fun App(s: UiState, requestPermissions: () -> Unit) {
@@ -180,51 +186,139 @@ private fun CodeDialog(done: (String?) -> Unit) {
 
 // ---- live ------------------------------------------------------------------------------------
 
+/** How long the focus ring and the brightness slider stay after a tap (docs/mock.html, 3 s). */
+private const val FOCUS_UI_MS = 3000L
+
+/**
+ * The live screen (docs/mock.html round 5, `phoneLiveHTML`): the picture full-bleed, one status
+ * line, the slim ruler, and a handful of icon buttons. Landscape puts them on a rail at the right
+ * with Stop at the bottom left; portrait puts Stop and the buttons in one bar at the bottom. The
+ * rest lives in Setup.
+ */
 @Composable
 private fun LiveScreen(s: UiState) {
     var setup by remember { mutableStateOf(false) }
     val cam = s.cam ?: return
-    Box(Modifier.fillMaxSize()) {
-        CameraView(s, applyMirror = true)
-        if (s.micOnly) MicOnlyScreen(s)
-        Box(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
-            Column(Modifier.align(Alignment.TopStart), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (s.reconnecting) Pill("Reconnecting to ${s.pcName}…", dot = Palette.yellow)
-                else Pill("Live to OBS · ${s.transport} · ${s.pcName}", dot = Palette.red)
-                Pill(statusLine(s) + " · ⚙ Setup", Modifier.clickable { setup = true })
-            }
-            Column(
-                Modifier.align(Alignment.CenterEnd).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // With the camera off, only what still works stays on the rail (DESIGN.md rule 7).
-                if (!s.micOnly && cam.flash) RailButton("Torch", on = s.torch) { Engine.apply(Cmd(torch = !s.torch)) }
-                if (!s.micOnly && s.cams.size > 1) RailButton("Camera\n" + nextCam(s).label.take(7)) { Engine.apply(Cmd(cam = nextCam(s).id)) }
-                RailButton(if (s.mic) "Mic" else "Mic\noff", on = s.mic, enabled = s.micAllowed) { Engine.apply(Cmd(mic = !s.mic)) }
-                if (!s.micOnly) {
-                    RailButton("Mirror", on = s.mirror) { Engine.apply(Cmd(mirror = !s.mirror)) }
-                    RailButton("Flip", on = s.flip) { Engine.apply(Cmd(flip = !s.flip)) }
-                    RailButton(if (s.lock) "Locked" else "Lock\nturn", on = s.lock) { Engine.apply(Cmd(lock = !s.lock)) }
+    // The last tap, and when the ring or slider was last touched: both show for 3 s after it, and
+    // for as long as focus is locked (a lock from the PC has no point, so it shows in the middle).
+    var focusAt by remember(cam.id) { mutableStateOf<Offset?>(null) }
+    var touchedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(touchedAt, s.aeLock) {
+        if (!s.aeLock && focusAt != null) {
+            delay(FOCUS_UI_MS)
+            if (!Engine.ui.value.aeLock) focusAt = null
+        }
+    }
+    val touch = { touchedAt = SystemClock.uptimeMillis() }
+    val hint = { t: String -> Engine.hint(t) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val portrait = maxHeight > maxWidth
+        CameraView(s, applyMirror = true, onFocus = { at, _ -> focusAt = at; touch() })
+        if (s.micOnly) MicOnlyScreen(s) else {
+            if (s.grid.phone) GridOverlay()
+            if (s.levelLine) Level()
+            val ring = focusAt ?: if (s.aeLock) Offset(constraints.maxWidth / 2f, constraints.maxHeight / 2f) else null
+            if (ring != null) {
+                FocusMark(ring, s.aeLock)
+                if (cam.hasEv) {
+                    val d = LocalDensity.current
+                    val w = constraints.maxWidth
+                    EvSlider(
+                        s.evIndex, cam.evMin, cam.evMax,
+                        Modifier.offset {
+                            val right = ring.x + 34.dp.toPx()
+                            val x = if (right + 28.dp.toPx() < w) right else ring.x - 62.dp.toPx()
+                            IntOffset(x.roundToInt(), (ring.y - with(d) { 52.dp.toPx() }).roundToInt())
+                        },
+                        onTouch = touch,
+                    ) { i -> if (i != s.evIndex) Engine.apply(Cmd(ev = i * cam.evStep)) }
                 }
-                RailButton("Setup") { setup = true }
-                RailButton("Dark") { Engine.setBlack(true) }
+            }
+        }
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+            if (s.aeLock && !s.micOnly) LockBadge(Modifier.align(Alignment.TopCenter).padding(top = 44.dp))
+            StatusLine(
+                liveLine(s),
+                Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 10.dp, end = if (portrait) 12.dp else 120.dp),
+                dot = if (s.reconnecting) Palette.yellow else Palette.red,
+                hot = if (Heat.hot(s.temp) && !s.micOnly) heatHint(cam, s.mode) else null,
+            ) { setup = true }
+            val buttons = @Composable { size: Dp ->
+                // With the camera off, only what still works stays (DESIGN.md rule 7).
+                if (!s.micOnly && s.cams.size > 1) RoundIcon(Glyph.flip, "Camera: ${nextCam(s).label}", size = size, onHint = hint) {
+                    Engine.apply(Cmd(cam = nextCam(s).id))
+                }
+                if (s.micAllowed) RoundIcon(if (s.mic) Glyph.mic else Glyph.micOff, if (s.mic) "Mic" else "Mic muted", on = !s.mic, size = size, onHint = hint) {
+                    Engine.apply(Cmd(mic = !s.mic))
+                }
+                if (!s.micOnly && cam.flash) RoundIcon(Glyph.torch, "Torch", on = s.torch, size = size, onHint = hint) {
+                    Engine.apply(Cmd(torch = !s.torch))
+                }
+                RoundIcon(Glyph.gear, "Setup", size = size, onHint = hint) { setup = true }
+                RoundIcon(Glyph.moon, "Dark screen", size = size, onHint = hint) { Engine.setBlack(true) }
+            }
+            if (portrait) {
+                Row(
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StopButton { Engine.stop() }
+                    buttons(40.dp)
+                }
+            } else {
+                Column(
+                    Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) { buttons(48.dp) }
+                StopButton(Modifier.align(Alignment.BottomStart).padding(12.dp)) { Engine.stop() }
             }
             if (!s.micOnly) Column(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.7f),
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .padding(if (portrait) PaddingValues(start = 8.dp, end = 8.dp, bottom = 60.dp) else PaddingValues(start = 96.dp, end = 70.dp, bottom = 6.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Pill(Presets.label(s.zoom))
-                Spacer(Modifier.height(8.dp))
-                ZoomRow(toCaps(cam), s.zoom) { Engine.apply(Cmd(zoom = it)) }
-                if (cam.zoomMax > cam.zoomMin + 1e-3) ZoomSlider(cam, s.zoom)
-            }
-            Box(Modifier.align(Alignment.BottomStart)) {
-                Primary("Stop") { Engine.stop() }
+                if (cam.zoomMax > cam.zoomMin + 1e-3) {
+                    ZoomValue(Presets.label(s.zoom))
+                    val caps = toCaps(cam)
+                    SlimRuler(cam.zoomMin, cam.zoomMax, (Presets.of(caps) + cam.zoomMax).distinct(), s.zoom, Presets::label) {
+                        Engine.apply(Cmd(zoom = it))
+                    }
+                } else {
+                    Pill("${cam.label}: this camera can't zoom")
+                }
             }
         }
         if (setup) SetupSheet(s) { setup = false }
         if (s.black) BlackScreen(s)
     }
+}
+
+/** The level line, turned to the screen: the phone's roll minus the display's own rotation. */
+@Composable
+private fun Level() {
+    val tilt by Engine.tilt.collectAsState()
+    LocalConfiguration.current // a turn of the phone changes the display rotation
+    val turned = (LocalView.current.display?.rotation ?: 0) * 90
+    LevelLine(tilt?.let { ((it - turned + 540f) % 360f) - 180f })
+}
+
+/** "Live · Wi-Fi · 1080p30 · 41°C", or the reconnecting state. */
+private fun liveLine(s: UiState): String = buildList {
+    if (s.reconnecting) add("Reconnecting to ${s.pcName.ifEmpty { "the PC" }}…") else {
+        add("Live")
+        if (s.transport.isNotEmpty()) add(s.transport)
+    }
+    if (s.micOnly) add("Mic only") else Mode.parse(s.mode)?.let { add(it.label.replace(" ", "")) }
+    if (s.temp > 0) add("%.0f°C".format(s.temp))
+}.joinToString(" · ")
+
+/** "hot: try 1080p" (PROTOCOL.md, Heat). The rate is named only when it differs from now. */
+private fun heatHint(cam: CameraInfo, mode: String): String {
+    val next = Heat.suggest(cam.modes.map { it.toString() }, mode)?.let { Mode.parse(it) } ?: return "hot"
+    val cur = Mode.parse(mode)
+    val label = if (cur != null && cur.fps == next.fps) next.label.substringBefore(" ") else next.label.replace(" ", "")
+    return "hot: try $label"
 }
 
 /** Mic only: the camera is off, so the screen shows the mic instead of a frozen picture. */
@@ -248,16 +342,17 @@ private fun MicOnlyScreen(s: UiState) {
 private val CLEAN_LABEL = mapOf("ns" to "Noise", "aec" to "Echo", "agc" to "Auto gain")
 
 /**
- * Setup: the mic (input, clean-up, meter, mic only) and the video quality. The dock in OBS has the
- * same mic controls; both send the same requests, so they always agree.
+ * Setup (docs/mock.html round 5, `setupSheetHTML`), over the picture: Mic, Video, and while the
+ * camera is on, Picture and Overlays. The dock in OBS reaches the same settings through the same
+ * requests, so both always agree. An option that depends on another is hidden while that one is
+ * off (the mic's inputs while it's muted, Picture while the camera is off).
  */
 @Composable
 private fun SetupSheet(s: UiState, close: () -> Unit) {
     val lvl by Engine.level.collectAsState()
     val cam = s.cam
-    val muted = { t: String -> @Composable { Text(t, color = Palette.muted, fontSize = 12.sp) } }
     Box(
-        Modifier.fillMaxSize().background(Palette.panel)
+        Modifier.fillMaxSize().background(Palette.sheet)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
     ) {
         Column(
@@ -265,68 +360,95 @@ private fun SetupSheet(s: UiState, close: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Setup", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("Setup", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Primary("Done") { close() }
             }
+
             SectionTitle("Mic")
             SheetRow(
                 when { !s.micAllowed -> "Mic not allowed"; s.mic -> "Mic on"; else -> "Mic muted" },
                 on = s.mic && s.micAllowed, enabled = s.micAllowed, onClick = { Engine.apply(Cmd(mic = !s.mic)) },
-            ) { Meter(lvl.peak, lvl.clip, Modifier.width(180.dp)) }
-            if (!s.micAllowed) muted("Allow the microphone in Android Settings → Apps → Rely-A-Cam → Permissions, then come back.")()
-            s.mics.forEach { m ->
-                val inUse = m.id == s.micIn
-                SheetRow(m.label, on = inUse, onClick = { Engine.apply(Cmd(micIn = m.id)) }) { if (inUse) muted("in use")() }
-            }
-            muted("A wired, USB or Bluetooth mic shows up here as soon as it's plugged in or connected.")()
-            if (s.clean.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ) { if (s.mic && s.micAllowed) Meter(lvl.peak, lvl.clip, Modifier.fillMaxWidth(0.45f)) }
+            if (!s.micAllowed) SheetNote("Allow the microphone in Android Settings → Apps → Rely-A-Cam → Permissions, then come back.")
+            if (s.mic && s.micAllowed) {
+                s.mics.forEach { m ->
+                    val inUse = m.id == s.micIn
+                    SheetRow(m.label, on = inUse, onClick = { Engine.apply(Cmd(micIn = m.id)) }) { if (inUse) SheetNote("in use") }
+                }
+                SheetNote("A wired, USB or Bluetooth mic shows up here as soon as it's plugged in or connected.")
+                if (s.clean.isNotEmpty()) ChipSet {
                     s.clean.forEach { k ->
                         val on = when (k) { "ns" -> s.ns; "aec" -> s.aec; else -> s.agc }
-                        Chip(CLEAN_LABEL[k] ?: k, selected = on) {
+                        SheetChip(CLEAN_LABEL[k] ?: k, on) {
                             Engine.apply(when (k) { "ns" -> Cmd(ns = !on); "aec" -> Cmd(aec = !on); else -> Cmd(agc = !on) })
                         }
                     }
                 }
-                muted("Clean-up: Noise cuts steady hiss and hum, Echo removes sound from a speaker nearby, Auto gain evens out loud and quiet.")()
             }
             SheetRow("Mic only (camera off)", on = s.micOnly, onClick = { Engine.apply(Cmd(micOnly = !s.micOnly)) }) {
-                muted(if (s.micOnly) "on" else "off")()
+                SheetNote(if (s.micOnly) "on" else "off")
             }
-            Spacer(Modifier.height(4.dp))
+
             SectionTitle("Video")
             if (cam != null) {
-                muted("What ${cam.label} can send. Higher heats the phone and needs strong Wi-Fi.")()
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChipSet {
                     cam.modes.map { it.toString() }.forEach { m ->
-                        Chip(Mode.parse(m)?.label ?: m, selected = m == s.mode) { Engine.apply(Cmd(mode = m)) }
+                        SheetChip(Mode.parse(m)?.label?.replace(" ", "") ?: m, m == s.mode) { Engine.apply(Cmd(mode = m)) }
                     }
                 }
-                if (s.codecs.size > 1) {
-                    muted("Codec")()
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        s.codecs.forEach { c -> Chip(c.uppercase(), selected = c == s.codec) { Engine.apply(Cmd(codec = c)) } }
+                if (s.codecs.size > 1) ChipSet("Codec") {
+                    s.codecs.forEach { c -> SheetChip(c.uppercase(), c == s.codec) { Engine.apply(Cmd(codec = c)) } }
+                }
+                SheetNote(videoInfo(s))
+            }
+
+            if (cam != null && !s.micOnly) {
+                SectionTitle("Picture")
+                ChipSet {
+                    SheetChip("Mirror", s.mirror) { Engine.apply(Cmd(mirror = !s.mirror)) }
+                    SheetChip("Flip", s.flip) { Engine.apply(Cmd(flip = !s.flip)) }
+                    SheetChip("Lock turn", s.lock) { Engine.apply(Cmd(lock = !s.lock)) }
+                }
+                if (cam.whiteBalances.size > 1) ChipSet("White balance") {
+                    cam.whiteBalances.forEach { k -> SheetChip(WhiteBalance.label(k), k == s.wb) { Engine.apply(Cmd(wb = k)) } }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (s.snap.isNotEmpty()) Secondary("Snapshot to PC") { Engine.apply(Cmd(snap = true)) }
+                    SheetNote(
+                        (if (s.snap.isEmpty()) "No snapshots at this quality on this camera. " else "") +
+                            if (cam.aeLock) "Tap the picture to focus, hold to lock." else "Tap the picture to focus.",
+                    )
+                }
+
+                SectionTitle("Overlays")
+                ChipSet("Grid") {
+                    GRID_PLACES.forEach { (k, label) ->
+                        val on = when (k) { "dock" -> s.grid.dock; "phone" -> s.grid.phone; else -> s.grid.out }
+                        SheetChip(label, on) { Engine.apply(Cmd(grid = mapOf(k to !on))) }
                     }
-                    muted("HEVC: same picture in less data, if the PC can decode it.")()
+                }
+                ChipSet("Level line") {
+                    SheetChip(if (s.levelLine) "On" else "Off", s.levelLine) { Engine.setLevelLine(!s.levelLine) }
+                    Box(Modifier.align(Alignment.CenterVertically).padding(start = 6.dp)) { SheetNote("this phone only") }
                 }
             }
         }
     }
 }
 
+private val GRID_PLACES = listOf("dock" to "Dock", "phone" to "Phone", "out" to "OBS output")
+
 private fun nextCam(s: UiState): CameraInfo {
     val i = s.cams.indexOfFirst { it.id == s.cam?.id }
     return s.cams[(i + 1) % s.cams.size]
 }
 
-private fun statusLine(s: UiState): String = buildList {
-    if (s.micOnly) add("Mic only") else {
-        Mode.parse(s.mode)?.let { add(it.label) }
-        add(s.codec.uppercase())
-    }
+/** Setup's info line: "H.264 · 31.5 Mb/s · battery 78% · 41°C" (moved off the live screen). */
+private fun videoInfo(s: UiState): String = buildList {
+    add(if (s.codec == "hevc") "HEVC" else "H.264")
     if (s.kbps > 0) add("%.1f Mb/s".format(s.kbps / 1000.0))
+    if (s.battery >= 0) add("battery ${s.battery}%")
     if (s.temp > 0) add("%.0f°C".format(s.temp))
-    if (s.battery >= 0) add("${s.battery}%")
 }.joinToString(" · ")
 
 private fun toCaps(c: CameraInfo) = CamCaps(c.id, c.facingName, c.label, c.zoomMin, c.zoomMax, c.lenses, c.flash, emptyList())
@@ -337,23 +459,6 @@ private fun ZoomRow(cam: CamCaps, zoom: Double, pick: (Double) -> Unit) {
     if (stops.isEmpty()) { Pill("This camera can't zoom"); return }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         stops.forEach { z -> Chip(Presets.label(z), selected = kotlin.math.abs(z - zoom) < 0.02) { pick(z) } }
-    }
-}
-
-/** The ruler: a log-scale slider from the camera's own minimum to its maximum. */
-@Composable
-private fun ZoomSlider(cam: CameraInfo, zoom: Double) {
-    val lo = ln(cam.zoomMin)
-    val hi = ln(cam.zoomMax)
-    val pos = ((ln(zoom) - lo) / (hi - lo)).toFloat().coerceIn(0f, 1f)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(Presets.label(cam.zoomMin), color = Color.White, fontSize = 11.sp)
-        Slider(
-            value = pos, onValueChange = { Engine.apply(Cmd(zoom = exp(lo + it * (hi - lo)))) },
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Palette.blueLight, inactiveTrackColor = Color(0x66FFFFFF)),
-        )
-        Text(Presets.label(cam.zoomMax), color = Color.White, fontSize = 11.sp)
     }
 }
 

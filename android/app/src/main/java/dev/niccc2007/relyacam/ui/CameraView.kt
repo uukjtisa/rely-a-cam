@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.niccc2007.relyacam.Engine
 import dev.niccc2007.relyacam.UiState
@@ -35,9 +38,18 @@ import kotlinx.coroutines.delay
 /**
  * The camera picture, full-bleed, with pinch-to-zoom and tap-to-focus. Shows exactly what OBS
  * shows (mirror and flip included), turned for the screen.
+ *
+ * Without [onFocus] (the scanner) a tap focuses and draws its own short-lived ring. With it (the
+ * live screen) a tap focuses and a press held for [LOCK_HOLD_MS] locks focus and exposure; the
+ * caller draws the ring and the brightness slider where it says.
  */
 @Composable
-fun CameraView(s: UiState, applyMirror: Boolean, modifier: Modifier = Modifier) {
+fun CameraView(
+    s: UiState,
+    applyMirror: Boolean,
+    modifier: Modifier = Modifier,
+    onFocus: ((at: Offset, lock: Boolean) -> Unit)? = null,
+) {
     var view by remember { mutableStateOf<TextureView?>(null) }
     var ring by remember { mutableStateOf<Offset?>(null) }
     var ringKey by remember { mutableStateOf(0) }
@@ -93,33 +105,48 @@ fun CameraView(s: UiState, applyMirror: Boolean, modifier: Modifier = Modifier) 
                 }
             },
         )
-        Box(
-            Modifier.fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoom, _ -> if (zoom != 1f) Engine.pinch(zoom) }
-                }
-                .pointerInput(s.cam?.id, s.mirror, s.flip, s.previewW, applyMirror) {
-                    detectTapGestures { p ->
-                        val tv = view ?: return@detectTapGestures
-                        val cam = s.cam ?: return@detectTapGestures
-                        val inv = Matrix()
-                        if (!matrix(tv, s, cam, applyMirror).invert(inv)) return@detectTapGestures
-                        val pts = floatArrayOf(p.x, p.y)
-                        inv.mapPoints(pts)
-                        var cx = (pts[0] / tv.width).coerceIn(0f, 1f)
-                        val cy = (pts[1] / tv.height).coerceIn(0f, 1f)
-                        // The preview of a front camera arrives mirrored; the sensor's frame is not.
-                        if (cam.front) cx = 1 - cx
-                        val (sx, sy) = Upright.toSensor(cx, cy, cam.sensorOrientation, mirror = false, flip = false)
-                        Engine.focusSensor(sx, sy)
-                        ring = p
-                        ringKey++
+        val base = LocalViewConfiguration.current
+        // The approved mock locks on a 600 ms hold, a little longer than Android's long press, so a
+        // slow tap doesn't lock by accident.
+        val holdConfig = remember(base) {
+            object : ViewConfiguration by base { override val longPressTimeoutMillis: Long = LOCK_HOLD_MS }
+        }
+        CompositionLocalProvider(LocalViewConfiguration provides holdConfig) {
+            Box(
+                Modifier.fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ -> if (zoom != 1f) Engine.pinch(zoom) }
                     }
-                },
-        )
+                    .pointerInput(s.cam?.id, s.mirror, s.flip, s.previewW, applyMirror, onFocus != null) {
+                        fun focus(p: Offset, lock: Boolean) {
+                            val tv = view ?: return
+                            val cam = s.cam ?: return
+                            val inv = Matrix()
+                            if (!matrix(tv, s, cam, applyMirror).invert(inv)) return
+                            val pts = floatArrayOf(p.x, p.y)
+                            inv.mapPoints(pts)
+                            var cx = (pts[0] / tv.width).coerceIn(0f, 1f)
+                            val cy = (pts[1] / tv.height).coerceIn(0f, 1f)
+                            // The preview of a front camera arrives mirrored; the sensor's frame is not.
+                            if (cam.front) cx = 1 - cx
+                            val (sx, sy) = Upright.toSensor(cx, cy, cam.sensorOrientation, mirror = false, flip = false)
+                            Engine.focusSensor(sx, sy, lock)
+                            val cb = onFocus
+                            if (cb != null) cb(p, lock) else { ring = p; ringKey++ }
+                        }
+                        detectTapGestures(
+                            onLongPress = if (onFocus != null) { p -> focus(p, true) } else null,
+                            onTap = { p -> focus(p, false) },
+                        )
+                    },
+            )
+        }
         ring?.let { FocusRing(it, ringKey) { ring = null } }
     }
 }
+
+/** How long a press is held on the live picture to lock focus and exposure. */
+const val LOCK_HOLD_MS = 600L
 
 private fun matrix(tv: TextureView, s: UiState, cam: CameraInfo, applyMirror: Boolean): Matrix {
     val rotation = (tv.display?.rotation ?: 0) * 90

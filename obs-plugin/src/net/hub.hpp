@@ -10,6 +10,7 @@
 #include <obs.h>
 
 #include <QImage>
+#include <QRectF>
 #include <QObject>
 #include <QString>
 
@@ -94,6 +95,10 @@ public:
 	std::string restoreFor(const std::string &device);
 	void ensureSource(const std::string &device, const std::string &name);
 	void viewChanged(const PhoneView &v, bool gone);
+	/** The gestures app's layer and framing crop for a phone's source; a null image clears it. Any thread. */
+	void deliverLayer(const std::string &device, const QImage &layer, const QRectF &crop);
+	/** A gestures frame (GLIB, GDET) to one phone. Any thread. */
+	void sendGesture(const std::string &device, Type type, const std::string &json);
 	void emitPreview(const std::string &device, QImage img) { emit preview(QString::fromStdString(device), img); }
 	bool previewWanted() const { return previewWanted_.load(); }
 	void setPreviewWanted(bool on) { previewWanted_ = on; }

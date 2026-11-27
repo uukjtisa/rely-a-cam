@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../gestures/link.hpp"
 #include "../net/hub.hpp"
 
 #include <QElapsedTimer>
@@ -63,6 +64,8 @@ public:
 	void setPrediction(double scale, const QString &pill);
 	void setGrid(bool on);
 	void setHint(const QString &hint);
+	/** What the gestures app draws over this phone: its layer, the framing, the hands. */
+	void setGestures(const GestureOverlay &g) { gestures_ = g; }
 	void clear() { img_ = QImage(); update(); }
 	QSize sizeHint() const override { return {320, 180}; }
 
@@ -80,6 +83,7 @@ protected:
 
 private:
 	QImage img_;
+	GestureOverlay gestures_;
 	QString placeholder_, pill_, hint_;
 	int rot_ = 0;
 	bool mirror_ = false, flip_ = false, grid_ = false;

@@ -32,6 +32,8 @@ import dev.niccc2007.relyacam.protocol.CamCaps
 import dev.niccc2007.relyacam.protocol.CamState
 import dev.niccc2007.relyacam.protocol.Caps
 import dev.niccc2007.relyacam.protocol.Cmd
+import dev.niccc2007.relyacam.protocol.GestureDet
+import dev.niccc2007.relyacam.protocol.GestureLib
 import dev.niccc2007.relyacam.protocol.Discovery
 import dev.niccc2007.relyacam.protocol.Grid
 import dev.niccc2007.relyacam.protocol.Hello
@@ -113,6 +115,8 @@ data class UiState(
     val grid: Grid = Grid(),
     /** The level line (phone only, kept on the phone). */
     val levelLine: Boolean = false,
+    /** The PC's Rely-A-Cam-Gestures, when it has it: on for this phone, and its library. */
+    val gestures: GestureLib? = null,
 ) {
     /** Brightness in EV for the current camera. */
     val ev: Double get() = evIndex * (cam?.evStep ?: 0.0)
@@ -131,6 +135,7 @@ data class MicLevel(val peak: Float = 0f, val clip: Boolean = false)
 object Engine : CameraEvents, LinkEvents {
     private const val TAG = "RelyCam"
     private const val GIVE_UP_CAMERA_MS = 60_000L
+    private const val MAX_MEME_BYTES = 15L * 1024 * 1024
 
     private lateinit var app: Context
     lateinit var prefs: Prefs; private set
@@ -150,6 +155,11 @@ object Engine : CameraEvents, LinkEvents {
     private var clipUntil = 0L
 
     /** The phone's roll for the level line (see [Tilt]); only measured while the line shows. */
+    /** The gestures app's hands for the overlay (null: nothing to draw). Its own flow: it changes 15 times a second. */
+    private val _det = MutableStateFlow<GestureDet?>(null)
+    val det: StateFlow<GestureDet?> = _det
+    private val clearDet = Runnable { _det.value = null }
+
     private val _tilt = MutableStateFlow<Float?>(null)
     val tilt: StateFlow<Float?> = _tilt
     private lateinit var tiltSensor: Tilt
@@ -391,6 +401,8 @@ object Engine : CameraEvents, LinkEvents {
         val p = pairing!!
         prefs.remember(p)
         set { it.copy(recent = prefs.pcs(), pcName = l.welcome.pc.ifEmpty { p.pcName }, transport = Finder.transportName(app, p.hosts.firstOrNull()), reconnecting = false, notice = null) }
+        if (l.welcome.gesturesInstalled)
+            set { it.copy(gestures = it.gestures?.copy(installed = true, on = l.welcome.gesturesOn) ?: GestureLib(installed = true, on = l.welcome.gesturesOn)) }
         if (live) {
             // Back after a drop: the phone's state is the freshest, so it is sent, not replaced.
             sendCaps()
@@ -579,7 +591,56 @@ object Engine : CameraEvents, LinkEvents {
         venc?.stop(); venc = null
         stopAudio()
         LiveService.stop(app)
-        set { it.copy(torch = false, black = false, reconnecting = false, micOnly = false, aeLock = false, snap = "") }
+        set { it.copy(torch = false, black = false, reconnecting = false, micOnly = false, aeLock = false, snap = "", gestures = null) }
+        h.removeCallbacks(clearDet)
+        _det.value = null
+    }
+
+    // ---- gestures (the PC's Rely-A-Cam-Gestures, through the plugin) -------------------------
+
+    override fun onGestureLibrary(o: org.json.JSONObject) = post { set { it.copy(gestures = GestureLib.fromJson(o)) } }
+
+    /** The PC stops sending when the overlay goes off: what's drawn goes half a second later. */
+    override fun onGestureDet(o: org.json.JSONObject) {
+        val d = GestureDet.fromJson(o)
+        _det.value = d.takeIf { it.hands.isNotEmpty() || it.labels.isNotEmpty() }
+        h.removeCallbacks(clearDet)
+        h.postDelayed(clearDet, 500)
+    }
+
+    /** Gestures on or off for this phone, on the PC. */
+    fun setGesturesOn(on: Boolean) = post {
+        link?.sendGestureSet(org.json.JSONObject().put("on", on))
+        set { it.copy(gestures = it.gestures?.copy(on = on)) }
+    }
+
+    /** An edit from the Library sheet, done on the PC (it sends the library back). */
+    fun gestureEdit(o: org.json.JSONObject) = post { link?.sendGestureSet(o) }
+
+    /** A picture, GIF or video from the phone, added to the PC's memes. */
+    fun uploadMeme(uri: android.net.Uri) = post {
+        val cr = app.contentResolver
+        var name = "meme"
+        var size = -1L
+        val cols = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE)
+        cr.query(uri, cols, null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                name = c.getString(0) ?: name
+                size = if (c.isNull(1)) -1 else c.getLong(1)
+            }
+        }
+        val tooBig = "$name is too big to send (over ${MAX_MEME_BYTES / (1024 * 1024)} MB)"
+        if (size > MAX_MEME_BYTES) {
+            hint(tooBig)
+            return@post
+        }
+        val bytes = runCatching { cr.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+        when {
+            bytes == null -> hint("$name couldn't be read")
+            bytes.size > MAX_MEME_BYTES -> hint(tooBig)
+            link?.sendGestureFile(name, bytes) == true -> hint("Sending $name to the PC…")
+            else -> hint("Not connected to the PC")
+        }
     }
 
     /** The Stop button: everything is released and the notification goes (must-never list). */

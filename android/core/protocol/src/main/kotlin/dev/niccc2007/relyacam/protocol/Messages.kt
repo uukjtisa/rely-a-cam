@@ -281,12 +281,79 @@ data class Hello(val secret: String, val device: String, val name: String, val a
         .put("v", PROTOCOL_VERSION).put("k", secret).put("device", device).put("name", name).put("app", app)
 }
 
-data class Welcome(val pc: String, val pcId: String, val source: String, val codecs: List<String>, val restore: Cmd) {
+data class Welcome(
+    val pc: String, val pcId: String, val source: String, val codecs: List<String>, val restore: Cmd,
+    /** The PC has Rely-A-Cam-Gestures installed, and whether this phone has gestures on there. */
+    val gesturesInstalled: Boolean = false,
+    val gesturesOn: Boolean = false,
+) {
     companion object {
         fun fromJson(o: JSONObject) = Welcome(
             o.optString("pc"), o.optString("pcId"), o.optString("source"),
             o.optJSONArray("codecs").strings(), Cmd.fromJson(o.optJSONObject("restore")),
+            o.optJSONObject("gestures")?.optBoolean("installed") ?: false,
+            o.optJSONObject("gestures")?.optBoolean("on") ?: false,
         )
+    }
+}
+
+/**
+ * GDET: what the gestures app sees, to draw over the phone's picture. Points are fractions of the
+ * upright picture OBS shows (after mirror and flip), 21 per hand.
+ */
+data class GestureDet(val hands: List<FloatArray>, val labels: List<Label>) {
+    /** [armed] 0..1 is how long it's been held; [confirm] names the confirm sign while [state] is "waiting". */
+    data class Label(val name: String, val state: String, val x: Float, val y: Float, val armed: Float = 0f, val confirm: String = "")
+
+    companion object {
+        fun fromJson(o: JSONObject): GestureDet {
+            val hs = o.optJSONArray("hands")
+            val gs = o.optJSONArray("g")
+            return GestureDet(
+                (0 until (hs?.length() ?: 0)).mapNotNull { i -> hs!!.optJSONArray(i) }.map { a ->
+                    FloatArray(a.length()) { k -> a.optDouble(k).toFloat() }
+                },
+                (0 until (gs?.length() ?: 0)).mapNotNull { i -> gs!!.optJSONObject(i) }.map {
+                    Label(
+                        it.optString("n"), it.optString("s"), it.optDouble("x", 0.5).toFloat(), it.optDouble("y", 0.5).toFloat(),
+                        it.optDouble("a", 0.0).toFloat(), it.optString("c"),
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** One gesture in the PC's library, as the Library sheet lists it. */
+data class GestureItem(val id: String, val name: String, val on: Boolean, val mine: Boolean, val action: String)
+
+/** One meme: where it shows (head, full, spot) and its volume. */
+data class MemeItem(val id: String, val name: String, val kind: String, val place: String, val volume: Int, val sound: Boolean)
+
+/** GLIB: the gestures app's library and whether this phone has gestures on. */
+data class GestureLib(
+    val installed: Boolean = false,
+    val on: Boolean = false,
+    val linked: Boolean = false,
+    val status: String = "",
+    val gestures: List<GestureItem> = emptyList(),
+    val memes: List<MemeItem> = emptyList(),
+) {
+    companion object {
+        fun fromJson(o: JSONObject): GestureLib {
+            val gs = o.optJSONArray("gestures")
+            val ms = o.optJSONArray("memes")
+            return GestureLib(
+                o.optBoolean("installed"), o.optBoolean("on"), o.optBoolean("linked"), o.optString("status"),
+                (0 until (gs?.length() ?: 0)).mapNotNull { i -> gs!!.optJSONObject(i) }.map {
+                    GestureItem(it.optString("id"), it.optString("name"), it.optBoolean("on"), it.optBoolean("mine"), it.optString("action"))
+                },
+                (0 until (ms?.length() ?: 0)).mapNotNull { i -> ms!!.optJSONObject(i) }.map {
+                    MemeItem(it.optString("id"), it.optString("name"), it.optString("kind"), it.optString("place", "head"),
+                        it.optInt("volume", 80), it.optBoolean("sound"))
+                },
+            )
+        }
     }
 }
 

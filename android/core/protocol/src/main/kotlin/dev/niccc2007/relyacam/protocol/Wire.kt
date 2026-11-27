@@ -22,6 +22,14 @@ object Type {
     const val ACONF = 0x12
     const val AUDIO = 0x13
     const val SNAP = 0x14
+    /** PC -> phone: the gestures library for the Library sheet (PROTOCOL.md, "Gestures"). */
+    const val GLIB = 0x20
+    /** Phone -> PC: an edit from the Library sheet (JSON). */
+    const val GSET = 0x21
+    /** Phone -> PC: a meme file (u32 name length, UTF-8 name, the file's bytes). */
+    const val GFILE = 0x22
+    /** PC -> phone: the hands and gesture names to draw over the picture (JSON). */
+    const val GDET = 0x23
 }
 
 const val PROTOCOL_VERSION = 1

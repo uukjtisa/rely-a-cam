@@ -59,6 +59,20 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#RuleUdp}"" dir=in action=allow protocol=UDP localport=41126 program=""{code:ObsExe}"" profile=any"; Flags: runhidden
 Filename: "{code:ObsExe}"; WorkingDir: "{code:ObsDir}"; Description: "Open OBS now (the Phone Camera dock shows a QR)"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: ObsFound
 
+#ifdef GesturesSetup
+; Rely-A-Cam-Gestures, bundled when package.ps1 is given its setup (-GesturesSetup or RACG_SETUP).
+; It's its own program with its own uninstaller; this only runs its setup, silently, with its
+; default outputs.
+[Tasks]
+Name: "gestures"; Description: "Also install Rely-A-Cam-Gestures: hand and face gestures and memes for your phone cameras (about 150 MB)"; Flags: unchecked
+
+[Files]
+Source: "{#GesturesSetup}"; DestDir: "{tmp}"; DestName: "RelyACamGestures-Setup.exe"; Flags: deleteafterinstall; Tasks: gestures
+
+[Run]
+Filename: "{tmp}\RelyACamGestures-Setup.exe"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"; StatusMsg: "Installing Rely-A-Cam-Gestures..."; Tasks: gestures
+#endif
+
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#RuleTcp}"""; Flags: runhidden; RunOnceId: "fwtcp"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#RuleUdp}"""; Flags: runhidden; RunOnceId: "fwudp"

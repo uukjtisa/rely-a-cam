@@ -1,5 +1,9 @@
 package dev.niccc2007.relyacam.ui
 
+import dev.niccc2007.relyacam.protocol.GestureDet
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -378,6 +382,60 @@ fun GridOverlay(modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * The gestures overlay, in the gestures app's own colours so the phone, the dock and that app's
+ * window look the same (docs/DESIGN.md rule 4, the one exception): a note-green skeleton with white
+ * joints, a ring that fills while a gesture is held (amber while it waits for the confirm sign),
+ * and its name on a dark pill under it. [mapper] is given the canvas size and returns where a
+ * point of the upright picture (0..1) lands on screen.
+ */
+@Composable
+fun GestureMarks(det: GestureDet, modifier: Modifier = Modifier, mapper: (w: Float, h: Float) -> (Float, Float) -> Offset) {
+    val measurer = rememberTextMeasurer()
+    Canvas(modifier.fillMaxSize()) {
+        val at = mapper(size.width, size.height)
+        val u = density
+        for (hand in det.hands) {
+            if (hand.size < 42) continue
+            val pts = List(21) { i -> at(hand[2 * i], hand[2 * i + 1]) }
+            for ((a, b) in HAND_BONES) drawLine(GESTURE_SKELETON, pts[a], pts[b], strokeWidth = 2.5f * u, cap = StrokeCap.Round)
+            for (i in 1 until 21) drawCircle(Color.White, radius = 2.2f * u, center = pts[i])
+            drawCircle(GESTURE_SKELETON, radius = 3.5f * u, center = pts[0])
+        }
+        for (l in det.labels) {
+            val waiting = l.state == "waiting"
+            val c = at(l.x, l.y) + Offset(0f, 30 * u)
+            val r = 19 * u
+            val ring = Stroke(width = 5 * u, cap = StrokeCap.Round)
+            drawCircle(GESTURE_RING_TRACK, radius = r, center = c, style = ring)
+            drawArc(
+                if (waiting) Palette.yellow else GESTURE_SKELETON, startAngle = -90f,
+                sweepAngle = 360f * (if (waiting) 1f else l.armed.coerceIn(0f, 1f)), useCenter = false,
+                topLeft = c - Offset(r, r), size = Size(2 * r, 2 * r), style = ring,
+            )
+            val text = if (waiting && l.confirm.isNotEmpty()) "${l.name}: show ${l.confirm} with your other hand" else l.name
+            val laid = measurer.measure(
+                text, TextStyle(color = if (waiting) Palette.yellow else Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+            )
+            val w = laid.size.width + 16 * u
+            val h = laid.size.height + 4 * u
+            val tl = Offset(c.x - w / 2, c.y + 26 * u)
+            drawRoundRect(GESTURE_PILL, topLeft = tl, size = Size(w, h), cornerRadius = CornerRadius(h / 2, h / 2))
+            drawText(laid, topLeft = Offset(tl.x + 8 * u, tl.y + 2 * u))
+        }
+    }
+}
+
+private val GESTURE_SKELETON = Color(0xFF5FD06C)
+private val GESTURE_RING_TRACK = Color(0x88000000)
+private val GESTURE_PILL = Color(0xB8000000)
+
+/** MediaPipe's hand skeleton: the bones between its 21 points. */
+private val HAND_BONES = listOf(
+    0 to 1, 1 to 2, 2 to 3, 3 to 4, 0 to 5, 5 to 6, 6 to 7, 7 to 8, 5 to 9, 9 to 10, 10 to 11, 11 to 12,
+    9 to 13, 13 to 14, 14 to 15, 15 to 16, 13 to 17, 0 to 17, 17 to 18, 18 to 19, 19 to 20,
+)
 
 /**
  * The level line (`.levelov`): a short line across the middle that stays parallel to the real

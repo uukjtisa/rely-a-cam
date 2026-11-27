@@ -75,12 +75,63 @@ flags   := 1 = key frame, 2 = codec config
 | 0x12 | ACONF | phone to PC | JSON `{"codec":"aac","rate":48000,"ch":1}` |
 | 0x13 | AUDIO | phone to PC | media: one raw AAC access unit. A config frame carries the AudioSpecificConfig |
 | 0x14 | SNAP | phone to PC | a whole JPEG file, the answer to CMD `{"snap":true}`. It is turned upright (EXIF or pixels); mirror and flip are not applied |
+| 0x20 | GLIB | PC to phone | JSON: the gestures library (see "Gestures" below), on connect and whenever it changes |
+| 0x21 | GSET | phone to PC | JSON: one edit from the phone's Library sheet |
+| 0x22 | GFILE | phone to PC | a meme file: `nameLength:u32  name (UTF-8)  bytes`, at most 15 MiB |
+| 0x23 | GDET | PC to phone | JSON: the hands and gesture names to draw over the picture, about 15 a second while the detection overlay is on |
 
 `restore` in WELCOME has the same keys as CMD. It holds what OBS remembered for this phone's
 source (camera, zoom per camera, mode, mirror, flip, lock, white balance, brightness, grid). The
 phone applies it, because OBS wins on reconnect. `snap` is never part of `restore`.
 
+WELCOME also carries `"gestures":{"installed":true,"on":false}` when the PC has
+Rely-A-Cam-Gestures: whether it's installed, and whether this phone has gestures on. A phone that
+sees no `gestures` key shows no Gestures section.
+
 A plugin that doesn't know a frame type ignores it, so a new type never needs a version bump.
+
+## Gestures
+
+Rely-A-Cam-Gestures is a separate program on the PC. The plugin talks to it (its own LINK
+protocol, in that program's repo) and relays the parts the phone needs. The phone never talks to
+it directly.
+
+GLIB, PC to phone:
+
+```
+{"installed":true, "on":true, "linked":true, "status":"Gestures ready (GPU)",
+ "gestures":[{"id":"builtin:thumbs_up","name":"Thumbs up","on":true,"mine":false,"action":"Torch"}],
+ "memes":[{"id":"m1","name":"vine boom","kind":"Video","place":"head","volume":80,"sound":true}]}
+```
+
+`linked` is false until the gestures app is running; the lists are empty until then. `place` is
+`head` (follows the face), `full` (the whole picture) or `spot` (where it was put in the editor).
+
+GSET, phone to PC, one of:
+
+| JSON | Does |
+|---|---|
+| `{"on":true}` | gestures on or off for this phone (the plugin starts the app when needed) |
+| `{"openEditor":true}` | opens the gestures app's window on the PC, showing this phone |
+| `{"gesture":{"id":..,"on":false}}` | one gesture on or off |
+| `{"meme":{"id":..,"place":"full","volume":60}}` | where a meme shows, its volume (either key) |
+| `{"removeMeme":id}` | removes a meme |
+| `{"record":id}` | records a take of one of your gestures, from this phone's camera (3, 2, 1, then 2 s) |
+| `{"newGesture":true}` | makes a new gesture of yours and records its first take |
+
+Every edit is done on the PC, which sends GLIB back, so the phone shows what the PC has rather
+than what it asked for.
+
+GDET, PC to phone, while the dock's "Detection overlay in the dock and on the phone" is on:
+
+```
+{"hands":[[x0,y0, x1,y1, ... x20,y20]], "g":[{"n":"Thumbs up","s":"armed","x":0.42,"y":0.31}]}
+```
+
+Points are fractions of the upright picture OBS shows (after `rot`, mirror and flip), 21 per hand
+in MediaPipe's order. `s` is `""`, `"armed"` (held long enough) or `"waiting"` (wants the confirm
+sign). The phone maps each point back through the stream's turn to its own preview, and clears
+the overlay half a second after the last GDET.
 
 ## Capability report (CAPS)
 

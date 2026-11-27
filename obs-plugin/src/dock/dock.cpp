@@ -3,6 +3,7 @@
 
 #include "../audio/cable.hpp"
 #include "../audio/routing.hpp"
+#include "../gestures/link.hpp"
 #include "../sys/system.hpp"
 #include "../third_party/qrcodegen/qrcodegen.hpp"
 
@@ -126,6 +127,66 @@ static void paintGrid(QPainter &p, const QRectF &box)
 	p.restore();
 }
 
+// The gestures overlay, in the gestures app's own colours (Rely-A-Cam-Gestures, output/overlay.cpp),
+// so the dock, the phone and that app's window all look the same: a note-green skeleton with white
+// joints, a ring that fills while a gesture is held (amber while it waits for the confirm sign),
+// and the name on a dark pill under it. The framing box is white at the grid's opacity.
+static const QColor kGestureFrame(255, 255, 255, 140), kRingTrack(0, 0, 0, 0x88), kGesturePill(0, 0, 0, 0xB8);
+
+static void paintGestures(QPainter &p, const QRectF &box, const GestureOverlay &g)
+{
+	static const int kBones[][2] = {{0, 1},   {1, 2},   {2, 3},   {3, 4},   {0, 5},   {5, 6},   {6, 7},
+					{7, 8},   {5, 9},   {9, 10},  {10, 11}, {11, 12}, {9, 13},  {13, 14},
+					{14, 15}, {15, 16}, {13, 17}, {0, 17},  {17, 18}, {18, 19}, {19, 20}};
+	// The app draws at 1x on a 1280-wide picture; the dock's picture is smaller, and its marks scale with it.
+	const double s = std::clamp(box.width() / 640.0, 0.5, 1.0);
+	auto at = [&box](QPointF f) { return QPointF(box.x() + f.x() * box.width(), box.y() + f.y() * box.height()); };
+	p.save();
+	p.setRenderHint(QPainter::Antialiasing);
+	for (const auto &h : g.hands) {
+		if (h.size() != 21)
+			continue;
+		QPen bone(kNoteGreen, 2.5 * s);
+		bone.setCapStyle(Qt::RoundCap);
+		p.setPen(bone);
+		for (const auto &b : kBones)
+			p.drawLine(at(h[size_t(b[0])]), at(h[size_t(b[1])]));
+		p.setPen(Qt::NoPen);
+		p.setBrush(Qt::white);
+		for (size_t i = 1; i < 21; i++)
+			p.drawEllipse(at(h[i]), 2.2 * s, 2.2 * s);
+		p.setBrush(kNoteGreen);
+		p.drawEllipse(at(h[0]), 3.5 * s, 3.5 * s);
+	}
+	QFont f = p.font();
+	f.setPixelSize(std::max(9, int(12 * s)));
+	f.setWeight(QFont::DemiBold);
+	p.setFont(f);
+	const QFontMetricsF fm(f);
+	for (const auto &l : g.labels) {
+		const bool waiting = l.state == "waiting";
+		const QPointF c = at(l.at) + QPointF(0, 30 * s);
+		const double r = 19 * s, w = 5 * s;
+		p.setBrush(Qt::NoBrush);
+		p.setPen(QPen(kRingTrack, w));
+		p.drawEllipse(c, r, r);
+		QPen arc(waiting ? kYellow : kNoteGreen, w);
+		arc.setCapStyle(Qt::RoundCap);
+		p.setPen(arc);
+		p.drawArc(QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r), 90 * 16,
+			  -int(std::clamp(waiting ? 1.0f : l.armed, 0.0f, 1.0f) * 360 * 16));
+		const QString text = waiting && !l.confirm.isEmpty() ? l.name + ": show " + l.confirm + " with your other hand" : l.name;
+		const double tw = fm.horizontalAdvance(text) + 16 * s, th = fm.height() + 4 * s;
+		const QRectF pill(c.x() - tw / 2, c.y() + 26 * s, tw, th);
+		p.setPen(Qt::NoPen);
+		p.setBrush(kGesturePill);
+		p.drawRoundedRect(pill, th / 2, th / 2);
+		p.setPen(waiting ? kYellow : QColor(Qt::white));
+		p.drawText(pill, Qt::AlignCenter, text);
+	}
+	p.restore();
+}
+
 // ---- QR ----------------------------------------------------------------------------------
 
 QrWidget::QrWidget(QWidget *parent) : QWidget(parent)
@@ -245,6 +306,20 @@ void PreviewWidget::paintEvent(QPaintEvent *)
 		p.restore();
 		if (grid_)
 			paintGrid(p, box);
+		// Gestures: the output's framing as a dashed box, its layer inside it, and the hands.
+		const QRectF &c = gestures_.crop;
+		const QRectF shown(box.x() + c.x() * box.width(), box.y() + c.y() * box.height(), c.width() * box.width(),
+				   c.height() * box.height());
+		if (!gestures_.layer.isNull())
+			p.drawImage(shown, gestures_.layer);
+		if (c != QRectF(0, 0, 1, 1)) {
+			// On the picture, like the grid: white at a fixed opacity.
+			p.setPen(QPen(kGestureFrame, 1, Qt::DashLine));
+			p.setBrush(Qt::NoBrush);
+			p.drawRect(shown);
+		}
+		if (!gestures_.hands.empty() || !gestures_.labels.empty())
+			paintGestures(p, box, gestures_);
 	}
 
 	QFont small = font();
@@ -752,6 +827,10 @@ PhoneDock::PhoneDock(QWidget *parent) : QWidget(parent)
 			refreshTimer_->start(40);
 	});
 	connect(&hub, &Hub::preview, this, &PhoneDock::onPreview);
+	connect(&Gestures::get(), &Gestures::changed, this, [this] {
+		if (!refreshTimer_->isActive())
+			refreshTimer_->start(40);
+	});
 	connect(&hub, &Hub::message, this, [this](const QString &t) { message(t); });
 	connect(addBtn_, &QPushButton::toggled, this, &PhoneDock::showAddPanel);
 	connect(qrSwap_, &QPushButton::clicked, this, [this] {
@@ -1239,6 +1318,25 @@ void PhoneDock::fillMenu(QMenu *m)
 	addItem(mic, "Mic only (camera off)", true, st.micOnly, live, [this, on = !st.micOnly] { cmd(json{{"micOnly", on}}.dump()); });
 	obs_source_release(src);
 
+	// Gestures: the Rely-A-Cam-Gestures app, attached to this phone.
+	{
+		Gestures &g = Gestures::get();
+		const std::string dev = view.device;
+		QMenu *gm = m->addMenu("Gestures");
+		gm->setEnabled(live);
+		const bool on = g.on(dev);
+		addItem(gm, "On for this phone", true, on, g.installed(), [dev, on] { Gestures::get().setOn(dev, !on); });
+		gm->addSeparator();
+		const bool linked = on && g.connected();
+		addItem(gm, "Detection overlay in the dock and on the phone", true, g.detectionDock(), linked,
+			[] { Gestures::get().setDetection(!Gestures::get().detectionDock(), Gestures::get().detectionOutput()); });
+		addItem(gm, "Detection overlay on the OBS output", true, g.detectionOutput(), linked,
+			[] { Gestures::get().setDetection(Gestures::get().detectionDock(), !Gestures::get().detectionOutput()); });
+		addItem(gm, "Open the gestures editor...", false, false, g.installed(), [dev] { Gestures::get().openEditor(dev); });
+		gm->addSeparator();
+		addItem(gm, g.status(), false, false, false, [] {});
+	}
+
 	// Overlays. The phone owns the grid setting, so both screens agree (PROTOCOL.md, STATE `grid`).
 	QMenu *ov = m->addMenu("Overlays");
 	ov->setEnabled(live);
@@ -1484,6 +1582,7 @@ void PhoneDock::onPreview(const QString &device, const QImage &img)
 	const PhoneView *v = current();
 	if (v && v->state.micOnly)
 		return;
+	preview_->setGestures(Gestures::get().on(selected_) ? Gestures::get().overlay(selected_) : GestureOverlay());
 	preview_->setFrame(img);
 }
 

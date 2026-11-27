@@ -33,6 +33,8 @@ import dev.niccc2007.relyacam.Engine
 import dev.niccc2007.relyacam.UiState
 import dev.niccc2007.relyacam.camera.CameraInfo
 import dev.niccc2007.relyacam.camera.Upright
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.delay
 
 /**
@@ -142,6 +144,33 @@ fun CameraView(
             )
         }
         ring?.let { FocusRing(it, ringKey) { ring = null } }
+    }
+}
+
+/**
+ * The gestures app's hands and gesture names over the picture (the detection overlay's "preview"
+ * place, with the dock). The PC's points are on the upright picture OBS shows; each goes back to
+ * the sensor (the stream's turn, mirror and flip), then through the same transform the preview
+ * uses, so it lands on the hand on this screen. [GestureMarks] draws them.
+ */
+@Composable
+fun GestureOverlay(s: UiState) {
+    val det by Engine.det.collectAsState()
+    val d = det ?: return
+    val cam = s.cam ?: return
+    val display = LocalView.current.display
+    GestureMarks(d) { w, h ->
+        val rotation = (display?.rotation ?: 0) * 90
+        val m = Upright.previewMatrix(w, h, s.previewW, s.previewH, cam, rotation, mirror = s.mirror, flip = s.flip)
+        val back = (360 - cam.sensorOrientation) % 360
+        return@GestureMarks { ux, uy ->
+            val (sx, sy) = Upright.toSensor(ux, uy, s.rot, s.mirror, s.flip)
+            var (cx, cy) = Upright.toSensor(sx, sy, back, mirror = false, flip = false)
+            if (cam.front) cx = 1 - cx
+            val p = floatArrayOf(cx * w, cy * h)
+            m.mapPoints(p)
+            Offset(p[0], p[1])
+        }
     }
 }
 

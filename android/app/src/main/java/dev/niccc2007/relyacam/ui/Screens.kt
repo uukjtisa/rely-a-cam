@@ -1,5 +1,9 @@
 package dev.niccc2007.relyacam.ui
 
+import org.json.JSONObject
+import dev.niccc2007.relyacam.protocol.GestureLib
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -198,6 +202,7 @@ private const val FOCUS_UI_MS = 3000L
 @Composable
 private fun LiveScreen(s: UiState) {
     var setup by remember { mutableStateOf(false) }
+    var library by remember { mutableStateOf(false) }
     val cam = s.cam ?: return
     // The last tap, and when the ring or slider was last touched: both show for 3 s after it, and
     // for as long as focus is locked (a lock from the PC has no point, so it shows in the middle).
@@ -215,6 +220,7 @@ private fun LiveScreen(s: UiState) {
         val portrait = maxHeight > maxWidth
         CameraView(s, applyMirror = true, onFocus = { at, _ -> focusAt = at; touch() })
         if (s.micOnly) MicOnlyScreen(s) else {
+            GestureOverlay(s)
             if (s.grid.phone) GridOverlay()
             if (s.levelLine) Level()
             val ring = focusAt ?: if (s.aeLock) Offset(constraints.maxWidth / 2f, constraints.maxHeight / 2f) else null
@@ -289,7 +295,8 @@ private fun LiveScreen(s: UiState) {
                 }
             }
         }
-        if (setup) SetupSheet(s) { setup = false }
+        if (setup) SetupSheet(s, openLibrary = { setup = false; library = true }) { setup = false }
+        if (library && s.gestures != null) GesturesSheet(s.gestures) { library = false }
         if (s.black) BlackScreen(s)
     }
 }
@@ -348,7 +355,7 @@ private val CLEAN_LABEL = mapOf("ns" to "Noise", "aec" to "Echo", "agc" to "Auto
  * off (the mic's inputs while it's muted, Picture while the camera is off).
  */
 @Composable
-private fun SetupSheet(s: UiState, close: () -> Unit) {
+private fun SetupSheet(s: UiState, openLibrary: () -> Unit, close: () -> Unit) {
     val lvl by Engine.level.collectAsState()
     val cam = s.cam
     Box(
@@ -362,6 +369,18 @@ private fun SetupSheet(s: UiState, close: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Setup", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Primary("Done") { close() }
+            }
+
+            // Gestures, when the PC has Rely-A-Cam-Gestures (the plugin says so in WELCOME).
+            s.gestures?.let { g ->
+                SectionTitle("Gestures")
+                SheetRow("Gestures on for this phone", on = g.on, onClick = { Engine.setGesturesOn(!g.on) }) {
+                    SheetNote(if (g.on) "on" else "off")
+                }
+                if (g.on && g.status.isNotEmpty()) SheetNote(g.status)
+                SheetRow("Library: gestures and memes", on = false, onClick = openLibrary) {
+                    SheetNote(if (g.linked) "${g.gestures.count { it.on }} on · ${g.memes.size} memes" else "›")
+                }
             }
 
             SectionTitle("Mic")
@@ -619,3 +638,89 @@ private fun Notice(text: String) {
         )
     }
 }
+
+
+/**
+ * The gestures Library (Rely-A-Cam-Gestures on the PC, through the plugin): which gestures are on,
+ * where each meme shows, memes added from this phone's gallery, and a take recorded on the PC.
+ * Every edit is done on the PC, which sends the library back, so both screens always agree.
+ */
+@Composable
+private fun GesturesSheet(g: GestureLib, close: () -> Unit) {
+    var tab by remember { mutableStateOf(0) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) Engine.uploadMeme(uri)
+    }
+    Box(
+        Modifier.fillMaxSize().background(Palette.sheet)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+    ) {
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Gestures", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Primary("Done") { close() }
+            }
+            SheetRow("Gestures on for this phone", on = g.on, onClick = { Engine.setGesturesOn(!g.on) }) {
+                SheetNote(if (g.on) "on" else "off")
+            }
+            if (g.status.isNotEmpty()) SheetNote(g.status)
+            if (!g.linked) {
+                SheetNote("The library shows here once the gestures app on the PC is running (turn gestures on).")
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SheetChip("Gestures", tab == 0) { tab = 0 }
+                    SheetChip("Memes", tab == 1) { tab = 1 }
+                }
+                if (tab == 0) GestureList(g) else MemeList(g) { pick.launch(arrayOf("image/*", "video/*")) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GestureList(g: GestureLib) {
+    g.gestures.forEach { item ->
+        SheetRow(item.name, on = item.on, onClick = {
+            Engine.gestureEdit(JSONObject().put("gesture", JSONObject().put("id", item.id).put("on", !item.on)))
+        }) {
+            SheetNote(item.action.ifEmpty { "no action yet" })
+            if (item.mine) SheetChip("Record", false) { Engine.gestureEdit(JSONObject().put("record", item.id)) }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Secondary("New gesture") { Engine.gestureEdit(JSONObject().put("newGesture", true)) }
+        Secondary("Open the editor on the PC") { Engine.gestureEdit(JSONObject().put("openEditor", true)) }
+    }
+    SheetNote("A new gesture or a take is recorded on the PC from this camera: 3, 2, 1, then hold it for 2 s.")
+}
+
+@Composable
+private fun MemeList(g: GestureLib, add: () -> Unit) {
+    g.memes.forEach { m ->
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.sheetRow).padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(m.name, color = Palette.text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                SheetNote(m.kind + if (m.sound) " · sound" else "")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                MEME_PLACES.forEach { (k, label) ->
+                    SheetChip(label, m.place == k) {
+                        Engine.gestureEdit(JSONObject().put("meme", JSONObject().put("id", m.id).put("place", k)))
+                    }
+                }
+                SheetChip("Remove", false) { Engine.gestureEdit(JSONObject().put("removeMeme", m.id)) }
+            }
+        }
+    }
+    if (g.memes.isEmpty()) SheetNote("No memes yet.")
+    Primary("Add from this phone") { add() }
+    SheetNote("Pictures, GIFs and videos (WebM keeps its transparency), up to 15 MB.")
+}
+
+private val MEME_PLACES = listOf("head" to "On my head", "full" to "Full frame", "spot" to "Its spot")

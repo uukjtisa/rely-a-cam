@@ -33,6 +33,14 @@ enum class Type : uint8_t {
 	AConf = 0x12,
 	Audio = 0x13,
 	Snap = 0x14,
+	/** PC -> phone: the gestures library, for the phone's Library screen (PROTOCOL.md, "Gestures"). */
+	GLib = 0x20,
+	/** Phone -> PC: an edit from the Library screen (JSON). */
+	GSet = 0x21,
+	/** Phone -> PC: a meme file picked on the phone (u32 name length, UTF-8 name, the file). */
+	GFile = 0x22,
+	/** PC -> phone: the hands and gesture names to draw on the phone's screen (JSON). */
+	GDet = 0x23,
 };
 
 struct Frame {

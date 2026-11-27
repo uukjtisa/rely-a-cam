@@ -2,6 +2,7 @@
 #include "hub.hpp"
 
 #include "../audio/routing.hpp"
+#include "../gestures/link.hpp"
 #include "../source/phone-mic.hpp"
 #include "../source/phone-source.hpp"
 #include "plugin-support.h"
@@ -520,6 +521,32 @@ void Hub::deliverPicture(const std::string &device, Picture &p)
 		}
 }
 
+void Hub::deliverLayer(const std::string &device, const QImage &layer, const QRectF &crop)
+{
+	std::lock_guard<std::mutex> l(m_);
+	for (auto *s : sources_)
+		if (s->device() == device)
+			s->setLayer(layer, crop);
+}
+
+void Hub::sendGesture(const std::string &device, Type type, const std::string &text)
+{
+	QMetaObject::invokeMethod(
+		this,
+		[this, device, type, text] {
+			PhoneLink *link = nullptr;
+			{
+				std::lock_guard<std::mutex> l(m_);
+				auto it = links_.find(device);
+				if (it != links_.end())
+					link = it->second;
+			}
+			if (link)
+				link->sendText(type, text);
+		},
+		Qt::QueuedConnection);
+}
+
 void Hub::deliverAudio(const std::string &device, const float *const *planes, int channels, int frames, int rate)
 {
 	// The level as it arrives, before OBS's volume and filters: it's the phone's level.
@@ -891,6 +918,17 @@ void PhoneLink::handle(Frame &f)
 	case Type::Snap:
 		saveSnap(f.payload);
 		break;
+	case Type::GSet:
+	case Type::GFile: {
+		// The phone's Library screen: the gestures app does the edit (UI thread, where the link lives).
+		const std::string dev = device_;
+		const bool file = Type(f.type) == Type::GFile;
+		std::string payload(f.payload.begin(), f.payload.end());
+		QMetaObject::invokeMethod(
+			&Gestures::get(),
+			[dev, file, payload] { Gestures::get().fromPhone(dev, file, payload); }, Qt::QueuedConnection);
+		break;
+	}
 	case Type::VConf:
 	case Type::Video:
 	case Type::AConf:
@@ -993,7 +1031,8 @@ void PhoneLink::handleHello(const Frame &f)
 		  {"pcId", hub_->pcId()},
 		  {"source", "Phone - " + name_},
 		  {"codecs", {"h264", "hevc", "aac"}},
-		  {"restore", restore}};
+		  {"restore", restore},
+		  {"gestures", {{"installed", Gestures::get().installed()}, {"on", Gestures::get().on(device_)}}}};
 	sendText(Type::Welcome, w.dump());
 	hub_->deliverConnected(device_, true);
 	publish();
@@ -1144,7 +1183,12 @@ void PhoneLink::workerLoop()
 				vdec_.open("h264");
 			const int64_t now = nowMs();
 			const bool wantSmall = hub_->previewWanted() && now - lastPreview_ >= 50;
-			if (vdec_.decode(m.data, m.size, pic, wantSmall ? &small : nullptr, 640)) {
+			// Gestures sees the same small picture, 15 times a second, whether or not the dock shows it.
+			const bool wantGestures = Gestures::get().wantsFrame(device_);
+			if (vdec_.decode(m.data, m.size, pic, wantSmall || wantGestures ? &small : nullptr, 640)) {
+				if (wantGestures && small.width > 0)
+					Gestures::get().deliverFrame(device_, small.bgra.data(), small.width, small.height,
+								     small.linesize, pic.width, pic.height);
 				hub_->deliverPicture(device_, pic);
 				if (wantSmall && small.width > 0) {
 					lastPreview_ = now;

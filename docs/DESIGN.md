@@ -9,7 +9,7 @@ values down, so a new screen or a new dock control matches without being re-deri
    colour in a screen.
 2. **Components** (all in `Kit.kt`):
    - Over the picture: `RoundIcon` (the live rail), `StatusLine` (the one status line),
-     `ZoomValue`, `SlimRuler`, `GridOverlay`, `LevelLine`, `LockBadge`, `FocusMark`, `EvSlider`,
+     `ZoomValue`, `SlimRuler`, `GridOverlay`, `GestureMarks`, `LevelLine`, `LockBadge`, `FocusMark`, `EvSlider`,
      `StopButton`, `Pill` (a notice over the picture).
    - Sheets (Setup): `SectionTitle`, `SheetRow`, `SheetChip`, `ChipSet`, `SheetNote`.
    - Elsewhere: `RailButton` (the Mic only screen), `Chip`, `Primary`, `Secondary`, `Gap`,
@@ -22,7 +22,11 @@ values down, so a new screen or a new dock control matches without being re-deri
    `red` is only for live, stop or a muted mic, `yellow` only for warnings (heat, firewall, a
    lock that's on), `green` only for connected (and `level` for a level phone). The one exception
    is a level meter, whose green, yellow and red zones mean loudness (OBS's own mixer uses the
-   same), with a red CLIP light.
+   same), with a red CLIP light. The second is the gestures overlay (`GestureMarks`), drawn on the
+   picture in Rely-A-Cam-Gestures' own colours so the phone, the dock and that app's window look
+   alike: a `#5FD06C` skeleton with white joints, a ring that fills while a gesture is held on a
+   `#88000000` track, the name on a `#B8000000` pill, and `yellow` only while a gesture waits for
+   the confirm sign.
 5. **Every state says what to do next.** An error names the cause and the fix (see the
    Unreachable screen). Never a bare "failed". Heat says what to try: "hot: try 1080p".
 6. **Zoom values** are labelled with their real value (`0.65x`, `2x`), via `Presets.label` or
@@ -78,6 +82,7 @@ These are taken from OBS 31's Yami theme, so the two halves read as one product.
 | Status line | `glass` pill, one line, fonts +1 over the mock (the mock phone is drawn at about 2/3 of real dp) |
 | Slim ruler | 36 dp tall; labelled ticks at the presets and the maximum, small ticks at each whole step between, a white handle |
 | Grid | rule of thirds, 1 px white at 55% with a dark edge, on the phone, the dock and the output alike |
+| Gestures overlay | skeleton 2.5 dp, joints 2.2 dp, wrist 3.5 dp; ring 19 dp radius, 5 dp wide, 30 dp under the hand; pill 12 sp semibold, 26 dp under the ring. The same numbers in px in the dock, scaled with its preview (0.5x to 1x). The output framing shows in the dock as a dashed white box at the grid's opacity |
 | Pills, chips | fully rounded (`RoundedCornerShape(50)`), 10 dp × 5 dp padding |
 | Sheet rows | 8 dp corners, `sheetRow` fill, 1 dp `blueLight` outline when chosen |
 | Meter | 6 dp bar (10 dp on the Mic only screen); zones at 65% and 85% of full scale; CLIP latched 1 s |
@@ -119,7 +124,9 @@ to bottom:
 (and the codec when there's a choice), Picture ▸ (Mirror, Flip, Lock turn; Lock focus +
 exposure, White balance ▸; Snapshot to PC), Mic ▸ (Mic on; while on: Input ▸, Clean-up ▸, Every
 scene, Use in other apps with "...and be Windows' default mic" and Remove VB-Cable..., or Use in
-other apps... to install it; Mic only), Overlays ▸ Grid ▸ (Dock, Phone, OBS output), then Show
+other apps... to install it; Mic only), Overlays ▸ Grid ▸ (Dock, Phone, OBS output), Gestures ▸ (On
+for this phone, the detection overlay in the dock and on the phone, on the OBS output, Open the
+gestures editor..., and the app's status), then Show
 preview and Connect a phone over USB. Every scene and Use in other apps are about the OBS
 source, so they stay while the phone is offline.
 

@@ -12,8 +12,13 @@
 
 .PARAMETER SkipBuild
   Package what is already built.
+
+.PARAMETER GesturesSetup
+  Rely-A-Cam-Gestures' own setup (RelyACamGestures-Setup-<ver>.exe), bundled behind an unticked
+  "Also install Rely-A-Cam-Gestures" box. Defaults to the RACG_SETUP environment variable; with
+  neither, the installer has no such box.
 #>
-param([switch]$SkipBuild)
+param([switch]$SkipBuild, [string]$GesturesSetup = $env:RACG_SETUP)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -82,7 +87,13 @@ if (-not $iscc) {
     }
 }
 if (-not $iscc) { throw "Inno Setup not found (scoop install inno-setup)." }
-& $iscc /Q "/DAppVersion=$ver" "/DStage=$stage" "/DOutDir=$out" "$root\installer\RelyACam.iss"
+$defs = @("/DAppVersion=$ver", "/DStage=$stage", "/DOutDir=$out")
+if ($GesturesSetup) {
+    if (-not (Test-Path $GesturesSetup)) { throw "No gestures setup at $GesturesSetup." }
+    $defs += "/DGesturesSetup=$((Resolve-Path $GesturesSetup).Path)"
+    Write-Host "Bundling $(Split-Path -Leaf $GesturesSetup)"
+}
+& $iscc /Q @defs "$root\installer\RelyACam.iss"
 if ($LASTEXITCODE) { throw "Installer build failed." }
 
 Write-Host ""

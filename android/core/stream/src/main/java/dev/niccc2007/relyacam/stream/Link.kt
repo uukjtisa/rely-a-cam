@@ -37,6 +37,10 @@ class ReachException(val reach: Reach, message: String) : IOException(message)
 interface LinkEvents {
     fun onWelcome(w: Welcome) {}
     fun onCmd(c: Cmd) {}
+    /** GLIB: the PC's gestures library changed (or gestures went on or off for this phone). */
+    fun onGestureLibrary(o: JSONObject) {}
+    /** GDET: the hands the gestures app sees, for the overlay on the phone's picture. */
+    fun onGestureDet(o: JSONObject) {}
     /** The link is gone. [byPeer] is true when the PC said BYE (OBS closed or the source was removed). */
     fun onClosed(reason: String, byPeer: Boolean) {}
 }
@@ -114,6 +118,18 @@ class Link private constructor(
         return true
     }
 
+    /** GSET: an edit from the Library sheet. */
+    fun sendGestureSet(o: JSONObject) = control(Type.GSET, o.toString())
+
+    /** GFILE: a meme picked on the phone. False when it's too big for one frame or the link is closed. */
+    fun sendGestureFile(name: String, bytes: ByteArray): Boolean {
+        val n = name.toByteArray(Charsets.UTF_8)
+        if (!open || 4 + n.size + bytes.size > MAX_FRAME) return false
+        val p = ByteBuffer.allocate(4 + n.size + bytes.size).putInt(n.size).put(n).put(bytes).array()
+        queue.offerLast(Out(Type.GFILE, p, false, false, 0))
+        return true
+    }
+
     /** Ends the link on purpose (BYE), releasing nothing else: the caller stops the camera. */
     fun close(sayBye: Boolean = true) {
         if (!open) return
@@ -155,6 +171,8 @@ class Link private constructor(
                 lastHeard.set(System.currentTimeMillis())
                 when (f.type) {
                     Type.CMD -> events.onCmd(Cmd.fromJson(JSONObject(f.text)))
+                    Type.GLIB -> events.onGestureLibrary(JSONObject(f.text))
+                    Type.GDET -> events.onGestureDet(JSONObject(f.text))
                     Type.PING -> queue.offerFirst(Out(Type.PONG, f.payload, false, false, 0))
                     Type.PONG -> if (f.payload.size == 8) {
                         rttMs = (System.nanoTime() / 1000 - ByteBuffer.wrap(f.payload).long) / 1000

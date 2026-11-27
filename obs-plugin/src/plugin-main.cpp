@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "audio/routing.hpp"
 #include "dock/dock.hpp"
+#include "gestures/link.hpp"
 #include "net/hub.hpp"
 #include "source/phone-mic.hpp"
 #include "source/phone-source.hpp"
@@ -42,12 +43,15 @@ static void onFrontendEvent(enum obs_frontend_event event, void *)
 	// Stop before OBS tears down: Windows gets its default mic back, and every phone gets BYE and
 	// releases its camera and mic.
 	if (event == OBS_FRONTEND_EVENT_EXIT) {
+		rac::Gestures::get().stop();
 		rac::routing::stop();
 		rac::Hub::get().stop();
 	}
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
 		// The scene collection is loaded, so every mic source and its settings exist.
 		rac::routing::start();
+		// Gestures: reconnect to the app for phones that had it on last time.
+		rac::Gestures::get().start();
 		// OBS restores its saved dock layout after loading plugins, and a plugin dock starts hidden.
 		// Reveal it after that, once ever, so a first-time user lands on the pairing QR.
 		QTimer::singleShot(500, [] { rac::PhoneDock::introduceOnce(); });
@@ -58,6 +62,7 @@ bool obs_module_load(void)
 {
 	rac::PhoneSource::registerSource();
 	rac::PhoneMic::registerSource();
+	rac::registerMemesSource();
 	rac::routing::registerSaveCallback();
 	rac::Hub::get().start();
 

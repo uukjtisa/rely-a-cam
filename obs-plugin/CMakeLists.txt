@@ -53,6 +53,7 @@ target_sources(
     src/audio/routing.cpp
     src/audio/cable.cpp
     src/dock/dock.cpp
+    src/gestures/link.cpp
     src/sys/system.cpp
     src/third_party/qrcodegen/qrcodegen.cpp
 )

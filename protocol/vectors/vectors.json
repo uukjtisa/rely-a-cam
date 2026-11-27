@@ -44,6 +44,24 @@
    "type": 20,
    "payload_hex": "ffd8ffd9",
    "hex": "1400000004ffd8ffd9"
+  },
+  {
+   "name": "gestures edit",
+   "type": 33,
+   "payload_text": "{\"gesture\":{\"id\":\"builtin:thumbs_up\",\"on\":false}}",
+   "hex": "21000000317b2267657374757265223a7b226964223a226275696c74696e3a7468756d62735f7570222c226f6e223a66616c73657d7d"
+  },
+  {
+   "name": "gestures file",
+   "type": 34,
+   "payload_hex": "00000005612e67696647494638",
+   "hex": "220000000d00000005612e67696647494638"
+  },
+  {
+   "name": "gestures overlay",
+   "type": 35,
+   "payload_text": "{\"hands\":[],\"g\":[{\"n\":\"Thumbs up\",\"s\":\"armed\",\"x\":0.5,\"y\":0.5}]}",
+   "hex": "23000000407b2268616e6473223a5b5d2c2267223a5b7b226e223a225468756d6273207570222c2273223a2261726d6564222c2278223a302e352c2279223a302e357d5d7d"
   }
  ],
  "heat": [

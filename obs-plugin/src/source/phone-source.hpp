@@ -9,6 +9,9 @@
 
 #include <obs-module.h>
 
+#include <QImage>
+#include <QRectF>
+
 #include <map>
 #include <mutex>
 #include <string>
@@ -34,6 +37,11 @@ public:
 	void setCameraOff(bool off);
 	/** The rule-of-thirds grid on the output (the phone owns the setting; STATE `grid.out`). */
 	void setGrid(bool on);
+	/**
+	 * From the gestures app: what to draw over the picture (memes, its overlay; premultiplied, the
+	 * source's shape, null for nothing) and the part of the picture to show (its framing). Any thread.
+	 */
+	void setLayer(const QImage &layer, const QRectF &crop);
 	/** OBS's remembered settings as a CMD-shaped JSON object (WELCOME `restore`). */
 	std::string restoreJson();
 
@@ -54,6 +62,14 @@ private:
 	bool hasPending_ = false;
 	gs_texture_t *tex_ = nullptr;
 	int tw_ = 0, th_ = 0;
+	// Gestures: the layer waiting to be uploaded, its texture, and the crop.
+	QImage layer_;
+	bool layerPending_ = false;
+	gs_texture_t *layerTex_ = nullptr;
+	int lw_ = 0, lh_ = 0;
+	QRectF crop_{0, 0, 1, 1};
+	gs_texrender_t *upright_ = nullptr;   // the turned picture, when only part of it is shown
+	void drawPicture(float tw, float th, float ow, float oh, int rot, bool mirror, bool flip);
 	int rot_ = 0;
 	bool mirror_ = false, flip_ = false, connected_ = false, cameraOff_ = false, grid_ = false;
 

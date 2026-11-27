@@ -47,6 +47,10 @@ PhoneSource::~PhoneSource()
 	obs_enter_graphics();
 	if (tex_)
 		gs_texture_destroy(tex_);
+	if (layerTex_)
+		gs_texture_destroy(layerTex_);
+	if (upright_)
+		gs_texrender_destroy(upright_);
 	obs_leave_graphics();
 }
 
@@ -130,6 +134,15 @@ void PhoneSource::setGrid(bool on)
 	grid_ = on;
 }
 
+void PhoneSource::setLayer(const QImage &layer, const QRectF &crop)
+{
+	std::lock_guard<std::mutex> l(m_);
+	layer_ = layer;
+	layerPending_ = true;
+	const QRectF c = crop.intersected(QRectF(0, 0, 1, 1));
+	crop_ = c.width() > 0.01 && c.height() > 0.01 ? c : QRectF(0, 0, 1, 1);
+}
+
 /** A filled rectangle in premultiplied [a] white or black, with the solid effect. */
 static void fillRect(gs_effect_t *solid, float x, float y, float w, float h, float rgb, float a)
 {
@@ -188,12 +201,49 @@ uint32_t PhoneSource::height()
 	return uint32_t(rot_ % 180 ? tw_ : th_);
 }
 
+/** The picture, turned about its centre and mirrored/flipped in the upright picture (PROTOCOL.md, STATE). */
+void PhoneSource::drawPicture(float tw, float th, float ow, float oh, int rot, bool mirror, bool flip)
+{
+	gs_effect_t *eff = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(eff, "image"), tex_);
+	gs_matrix_push();
+	gs_matrix_translate3f(ow / 2, oh / 2, 0);
+	gs_matrix_scale3f(mirror ? -1.0f : 1.0f, flip ? -1.0f : 1.0f, 1.0f);
+	gs_matrix_rotaa4f(0, 0, 1, RAD(float(rot)));
+	gs_matrix_translate3f(-tw / 2, -th / 2, 0);
+	while (gs_effect_loop(eff, "Draw"))
+		gs_draw_sprite(tex_, 0, uint32_t(tw), uint32_t(th));
+	gs_matrix_pop();
+}
+
 void PhoneSource::render(gs_effect_t *)
 {
 	int rot;
 	bool mirror, flip, connected, off, grid;
+	QRectF crop;
 	{
 		std::lock_guard<std::mutex> l(m_);
+		if (layerPending_) {
+			layerPending_ = false;
+			if (layer_.isNull()) {
+				if (layerTex_)
+					gs_texture_destroy(layerTex_);
+				layerTex_ = nullptr;
+			} else {
+				if (!layerTex_ || lw_ != layer_.width() || lh_ != layer_.height()) {
+					if (layerTex_)
+						gs_texture_destroy(layerTex_);
+					layerTex_ = gs_texture_create(uint32_t(layer_.width()), uint32_t(layer_.height()), GS_BGRA, 1,
+								      nullptr, GS_DYNAMIC);
+					lw_ = layer_.width();
+					lh_ = layer_.height();
+				}
+				if (layerTex_)
+					gs_texture_set_image(layerTex_, layer_.constBits(), uint32_t(layer_.bytesPerLine()), false);
+			}
+			layer_ = QImage();
+		}
+		crop = crop_;
 		if (hasPending_ && pending_.width > 0) {
 			if (!tex_ || tw_ != pending_.width || th_ != pending_.height) {
 				if (tex_)
@@ -226,20 +276,52 @@ void PhoneSource::render(gs_effect_t *)
 	gs_enable_framebuffer_srgb(true);
 	gs_blend_state_push();
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(eff, "image"), tex_);
 
-	// Turn about the centre, then mirror/flip in the upright picture (PROTOCOL.md, STATE).
-	gs_matrix_push();
-	gs_matrix_translate3f(ow / 2, oh / 2, 0);
-	gs_matrix_scale3f(mirror ? -1.0f : 1.0f, flip ? -1.0f : 1.0f, 1.0f);
-	gs_matrix_rotaa4f(0, 0, 1, RAD(float(rot)));
-	gs_matrix_translate3f(-tw / 2, -th / 2, 0);
-	while (gs_effect_loop(eff, "Draw"))
-		gs_draw_sprite(tex_, 0, uint32_t(tw), uint32_t(th));
-	gs_matrix_pop();
+	const bool cropped = crop != QRectF(0, 0, 1, 1);
+	bool drawn = false;
+	if (cropped) {
+		// Gestures framing: the turned picture into a texture, then the cropped part of it, filling
+		// the source. The source keeps its size, so scenes never jump.
+		if (!upright_)
+			upright_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+		gs_texrender_reset(upright_);
+		if (upright_ && gs_texrender_begin(upright_, uint32_t(ow), uint32_t(oh))) {
+			vec4 clear;
+			vec4_zero(&clear);
+			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+			gs_ortho(0.0f, ow, 0.0f, oh, -100.0f, 100.0f);
+			gs_blend_state_push();
+			gs_reset_blend_state();
+			gs_enable_blending(false);
+			drawPicture(tw, th, ow, oh, rot, mirror, flip);
+			gs_blend_state_pop();
+			gs_texrender_end(upright_);
+			gs_texture_t *t = gs_texrender_get_texture(upright_);
+			if (t) {
+				gs_effect_set_texture_srgb(gs_effect_get_param_by_name(eff, "image"), t);
+				const float cx = float(crop.x()) * ow, cy = float(crop.y()) * oh;
+				const float cw = std::max(1.0f, float(crop.width()) * ow), ch = std::max(1.0f, float(crop.height()) * oh);
+				gs_matrix_push();
+				gs_matrix_scale3f(ow / cw, oh / ch, 1.0f);
+				while (gs_effect_loop(eff, "Draw"))
+					gs_draw_sprite_subregion(t, 0, uint32_t(cx), uint32_t(cy), uint32_t(cw), uint32_t(ch));
+				gs_matrix_pop();
+				drawn = true;
+			}
+		}
+	}
+	if (!drawn)
+		drawPicture(tw, th, ow, oh, rot, mirror, flip);
+
+	// Gestures' layer (memes, its overlay) stretched over the source, in display space like the grid.
+	gs_enable_framebuffer_srgb(previous);
+	if (layerTex_) {
+		gs_effect_set_texture(gs_effect_get_param_by_name(eff, "image"), layerTex_);
+		while (gs_effect_loop(eff, "Draw"))
+			gs_draw_sprite(layerTex_, 0, uint32_t(ow), uint32_t(oh));
+	}
 
 	// The grid in display space, so it reads the same on a dark or bright picture.
-	gs_enable_framebuffer_srgb(previous);
 	if (grid)
 		drawGrid(ow, oh);
 	gs_blend_state_pop();

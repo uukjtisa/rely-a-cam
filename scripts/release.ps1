@@ -18,7 +18,7 @@
   Upload what package.ps1 built last time.
 .PARAMETER GesturesSetup
   The experimental gesture module's installer (RelyACamGestures-Setup-<ver>.exe), uploaded as its
-  own optional asset. It is NOT bundled into the plugin installer, so nobody downloads ~150 MB for
+  own optional asset. It is NOT bundled into the plugin installer, so nobody downloads ~50 MB for
   a module they didn't ask for. Defaults to the RACG_SETUP environment variable; leave both empty
   to release without it.
 #>
@@ -50,7 +50,7 @@ $h = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json';
 
 $gesturesNote = if ($GesturesSetup) { @"
 
-**Experimental, optional: the gesture module.** **$(Split-Path $GesturesSetup -Leaf)** adds hand and face gestures to your phone cameras: pinch zoom, a pinch box, follow face, and meme reactions. It is a separate install of about 150 MB, and Rely-A-Cam works fully without it.
+**Experimental, optional: the gesture module.** **$(Split-Path $GesturesSetup -Leaf)** adds hand and face gestures to your phone cameras: pinch zoom, a pinch box, follow face, and meme reactions. It is a separate download (about 50 MB), and Rely-A-Cam works fully without it.
 "@ } else { '' }
 $notes = @"
 Rely-A-Cam ${ver}: a free OBS webcam plugin. Your Android phone becomes a camera in OBS Studio, with zoom synced both ways.

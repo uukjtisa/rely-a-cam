@@ -37,7 +37,7 @@ Everything is on the [latest release](https://github.com/uukjtisa/rely-a-cam/rel
 |---|---|---|
 | Windows PC with OBS 31+ | `RelyACam-Setup-<version>.exe` | Run it. Open OBS; the **Phone Camera** dock shows a QR. |
 | Android phone (8.0+) | `RelyACam-<version>.apk` | Install it, open it, scan the QR. |
-| Optional, experimental | `RelyACamGestures-Setup-<version>.exe` | Hand and face gestures and memes for your phone cameras (about 150 MB). Rely-A-Cam works fully without it. |
+| Optional, experimental | `RelyACamGestures-Setup-<version>.exe` | Hand and face gestures and memes for your phone cameras (a 49 MB download). Rely-A-Cam works fully without it. |
 
 Only grabbed one of the two? Each half gets you the other in one step:
 
